@@ -119,6 +119,7 @@ Users see only their own sessions. `name` is generated for users (`u<id>-<slug>`
 | POST | `/api/sessions/{name}/queue`, `/api/queue` | v1 bulk queue (kept for compatibility); body `{campaign:"label", messages[] | template+recipients[], pool?[], random?:false, send_after?}` (`random:true` = random number from the pool per person) |
 | GET / POST | `/api/queue/campaigns/{label}` · `/api/queue/campaigns/{label}/cancel` | counts / cancel for a v1 queue label |
 | GET | `/api/queue/{id}` | one queued message |
+| GET | `/api/link-preview?url=&session=&fresh=1` | what the link's preview card will contain: `{title, description, image, has_image, thumb (data URL), upload:"ok|failed", advice?, error?}` |
 
 `to` may be a phone, `…@s.whatsapp.net`, group `…@g.us`, channel `…@newsletter`, or `contact:<id>`.
 

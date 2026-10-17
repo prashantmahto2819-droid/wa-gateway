@@ -48,7 +48,7 @@ export async function render(ctx) {
       </section>
     </div></div>`.s;
 
-  const comp = createComposer(root.querySelector('[data-composer]'), { groupMode: st.target === 'chats', story: st.mode === 'status' });
+  const comp = createComposer(root.querySelector('[data-composer]'), { groupMode: st.target === 'chats', story: st.mode === 'status', session: () => st.session });
   const prefill = sessionStorage.getItem('vr_prefill');
   if (prefill) { try { comp.set(JSON.parse(prefill)); } catch { /* */ } sessionStorage.removeItem('vr_prefill'); }
 
@@ -61,13 +61,14 @@ export async function render(ctx) {
     root.querySelector('[data-to-h]').textContent = st.mode === 'status' ? t('Who sees this status') : t('From and to');
     if (st.mode === 'status') { drawStatusAudience(w); return; }
     w.innerHTML = html`<div class="field"><span class="field-label">${t('Send to')}</span>
-      <div class="seg" role="radiogroup" aria-label="${t('Send to')}">${TARGETS.map(([k, i, l]) => html`<button type="button" role="radio" data-target="${k}" aria-checked="${st.target === k}" aria-selected="${st.target === k}">${ic(i, 15)}${t(l)}</button>`)}</div></div>
+      <div class="seg" role="radiogroup" aria-label="${t('Send to')}">${TARGETS.map(([k, i, l]) => html`<button type="button" role="radio" data-target="${k}" aria-checked="${st.target === k}" aria-selected="${st.target === k}">${ic(i, 15)}${t(l)}<span class="badge" data-tcount="${k}" hidden></span></button>`)}</div>
+      <p class="hint mt-s">${t('You can pick from every tab — numbers, contacts, groups, communities and channels are all kept and sent together.')}</p></div>
       <div data-to class="mt-s"></div><div data-rsum class="mt-s"></div>`.s;
     drawTarget();
   }
   function drawTarget() {
     const box = root.querySelector('[data-to]'); if (!box) return;
-    comp.setGroupMode(st.target === 'chats');
+    comp.setGroupMode(st.target === 'chats' || [...st.chatSel].some((x) => x.endsWith('@g.us')));
     if (st.target === 'phone') {
       box.innerHTML = html`<label class="field"><span>${t('Phone numbers with country code')}</span><textarea data-phones rows="3" placeholder="919876543210, 919812345678">${st.phones}</textarea>
         <small>${t('Separate with commas or new lines.')}</small></label>`.s;
@@ -76,10 +77,11 @@ export async function render(ctx) {
       drawPicked();
     } else if (!connected()) {
       box.innerHTML = notConnected();
-    } else if (st.target === 'wa') {
-      waContactsPicker(box, { session: st.session, selected: st.waSel, onChange: summary });
     } else {
-      chatsPicker(box, { session: st.session, selected: st.chatSel, onChange: summary });
+      // A fresh element per picker, so an old picker's listeners never touch the new list.
+      box.innerHTML = '<div></div>';
+      if (st.target === 'wa') waContactsPicker(box.firstChild, { session: st.session, selected: st.waSel, onChange: summary });
+      else chatsPicker(box.firstChild, { session: st.session, selected: st.chatSel, onChange: summary });
     }
     summary();
   }
@@ -87,19 +89,28 @@ export async function render(ctx) {
     const box = root.querySelector('[data-cpicked]'); if (!box) return;
     box.innerHTML = st.contacts.map((c) => html`<span class="chip">${c.name || fmtPhone(c.phone)}<button type="button" data-rmc="${c.id}" aria-label="${t('Remove')}">${ic('x')}</button></span>`.s).join('');
   }
-  function recipients() {
-    if (st.target === 'phone') return parsePhones(root.querySelector('[data-phones]')?.value ?? st.phones);
-    if (st.target === 'contact') return st.contacts.map((c) => 'contact:' + c.id);
-    if (st.target === 'wa') return [...st.waSel];
-    return [...st.chatSel];
+  // Everything picked on every tab is sent together (duplicates removed).
+  function parts() {
+    const typed = parsePhones(st.phones);
+    const wa = [...st.waSel].filter((p) => !typed.includes(p));
+    const chats = [...st.chatSel];
+    return { typed, contacts: st.contacts.map((c) => 'contact:' + c.id), wa,
+      groups: chats.filter((x) => x.endsWith('@g.us')), channels: chats.filter((x) => x.endsWith('@newsletter')) };
   }
+  function recipients() { const p = parts(); return [...p.typed, ...p.contacts, ...p.wa, ...p.groups, ...p.channels]; }
   function summary() {
+    const p = parts();
+    const counts = { phone: p.typed.length, contact: p.contacts.length, wa: p.wa.length, chats: p.groups.length + p.channels.length };
+    root.querySelectorAll('[data-tcount]').forEach((b) => { const n = counts[b.dataset.tcount] || 0; b.hidden = !n; b.textContent = n; });
+    comp.setGroupMode(st.target === 'chats' || p.groups.length > 0);
     const el = root.querySelector('[data-rsum]'); if (!el) return;
     const to = recipients();
+    if (!to.length) { el.innerHTML = ''; return; }
     const many = needsCampaign(to);
-    el.innerHTML = to.length ? html`<div class="note ${many ? 'info' : 'ok'}">${ic(many ? 'clock' : 'check', 16)}<span>${many
-      ? t('{n} recipients — they will get it one by one with safe gaps (as a campaign you can follow and pause).', { n: fmtNum(to.length) })
-      : t('{n} recipient(s) — sent right away.', { n: to.length })}</span></div>`.s : '';
+    const bits = [p.typed.length && t('{n} numbers', { n: p.typed.length }), p.contacts.length && t('{n} contacts', { n: p.contacts.length }), p.wa.length && t('{n} WhatsApp contacts', { n: p.wa.length }), p.groups.length && t('{n} groups', { n: p.groups.length }), p.channels.length && t('{n} channels', { n: p.channels.length })].filter(Boolean).join(' · ');
+    el.innerHTML = html`<div class="note ${many ? 'info' : 'ok'}">${ic(many ? 'clock' : 'check', 16)}<span class="grow"><b>${t('{n} selected', { n: fmtNum(to.length) })}</b> — ${bits}<br>${many
+      ? t('They will get it one by one with safe gaps (as a campaign you can follow and pause).')
+      : t('Sent right away.')}</span><button type="button" class="btn sm ghost" data-a="clear-all">${t('Clear all')}</button></div>`.s;
   }
   const isChat = (x) => x.endsWith('@g.us') || x.endsWith('@newsletter');
   const needsCampaign = (to) => to.length > DIRECT_MAX || to.filter(isChat).length > 1;
@@ -121,7 +132,7 @@ export async function render(ctx) {
         : html`<p class="muted">${t('No tags yet. Import contacts with a tag in Contacts.')}</p>`.s;
     } else if (a.mode === 'phones') {
       if (!connected()) body.innerHTML = notConnected();
-      else waContactsPicker(body, { session: st.session, selected: st.audSel, onChange: () => {} });
+      else { body.innerHTML = '<div></div>'; waContactsPicker(body.firstChild, { session: st.session, selected: st.audSel, onChange: () => {} }); }
     } else body.innerHTML = '';
   }
   function statusAudience() {
@@ -180,6 +191,7 @@ export async function render(ctx) {
     if (rmc) { st.contacts = st.contacts.filter((x) => String(x.id) !== rmc.dataset.rmc); drawPicked(); summary(); return; }
     const b = e.target.closest('[data-a]'); if (!b) return;
     const a = b.dataset.a;
+    if (a === 'clear-all') { st.phones = ''; st.contacts = []; st.waSel.clear(); st.chatSel.clear(); drawTarget(); return; }
     if (a === 'load-tpl') loadTemplate(comp);
     if (a === 'save-tpl') {
       const err = comp.validate(); if (err) return toast(err, 'warn');

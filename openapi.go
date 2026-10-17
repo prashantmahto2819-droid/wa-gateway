@@ -55,6 +55,7 @@ var apiDoc = [][4]string{
 	{"GET", "/api/sessions/{name}/channels", "Channels", "Channels you follow/own"},
 	{"POST", "/api/sessions/{name}/channels", "Channels", "Create channel {name, description}"},
 	{"GET", "/api/sessions/{name}/channels/resolve", "Channels", "Channel from invite link (?invite=)"},
+	{"GET", "/api/link-preview", "Messages", "Check a link's preview card (?url=&session=&fresh=1)"},
 	{"GET", "/api/sessions/{name}/wa-contacts", "Contacts", "The linked phone's WhatsApp contacts (saved + unsaved), A to Z"},
 	{"GET", "/api/contacts", "Contacts", "Search contacts (?q=&tag=&page=&limit=)"},
 	{"POST", "/api/contacts", "Contacts", "Create/update by phone"},

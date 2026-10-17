@@ -1061,5 +1061,17 @@ const HI = {
   "Post again": "फिर से लगाएँ",
   "Status posted from {n} — shared with {c} people.": "Status {n} से लग गया — {c} लोगों के साथ share हुआ।",
   "Status posted from {n}.": "Status {n} से लग गया।",
+  "You can pick from every tab — numbers, contacts, groups, communities and channels are all kept and sent together.": "हर tab से चुन सकते हैं — नंबर, contacts, groups, communities और channels सब याद रहते हैं और एक साथ भेजे जाते हैं।",
+  "{n} WhatsApp contacts": "{n} WhatsApp contacts",
+  "They will get it one by one with safe gaps (as a campaign you can follow and pause).": "सबको एक-एक करके सुरक्षित अंतर से जाएगा (campaign के रूप में, जिसे देख और रोक सकते हैं)।",
+  "Sent right away.": "तुरंत भेजा जाएगा।",
+  "Clear all": "सब हटाएँ",
+  "Checking the link…": "Link जाँच रहे हैं…",
+  "Check again": "फिर जाँचें",
+  "Could not check the link.": "Link जाँच नहीं पाए।",
+  "Preview ready: title and picture found.": "Preview तैयार: title और फ़ोटो मिल गए।",
+  "(The big picture could not be uploaded right now; a small one will be used.)": "(बड़ी फ़ोटो अभी upload नहीं हो पाई; छोटी फ़ोटो जाएगी।)",
+  "The server could not open this page:": "Server यह page नहीं खोल पाया:",
+  "No picture found on this page.": "इस page पर कोई फ़ोटो नहीं मिली।",
 };
 /* HINDI_END */

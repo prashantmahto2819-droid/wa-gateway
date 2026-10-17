@@ -1,5 +1,5 @@
 // Reusable message composer (Send, Templates, Campaigns, Auto-replies) + media picker.
-import { html, raw, ic, icon, t, esc, api, upload, modal, toast, fmtBytes, fmtTime, empty, skel, toggle, $, $$ } from '/static/app/core.js';
+import { html, raw, ic, icon, t, esc, api, upload, modal, toast, fmtBytes, fmtTime, empty, skel, toggle, debounce, $, $$ } from '/static/app/core.js';
 
 const KINDS = [
   ['text', 'text', 'Text'], ['media', 'image', 'Media'], ['poll', 'poll', 'Poll'],
@@ -38,7 +38,7 @@ export function summarize(m) {
 }
 
 /** Render a WhatsApp-like preview bubble for a Message. */
-export function bubbleHTML(m, { vars = {}, story = false, bg = '#0b6e5f' } = {}) {
+export function bubbleHTML(m, { vars = {}, story = false, bg = '#0b6e5f', link = null } = {}) {
   const sub = (s) => renderText(applyVars(spin(String(s || '')), { ...SAMPLE, ...vars }));
   const now = fmtTime(Date.now() / 1000);
   const ts = raw(`<span class="ts">${esc(now)} ${icon('check', 12)}</span>`);
@@ -55,8 +55,10 @@ export function bubbleHTML(m, { vars = {}, story = false, bg = '#0b6e5f' } = {})
   }
   let inner = '';
   if (k === 'text') {
-    const link = m.preview !== false && /https?:\/\/[^\s]+/.exec(m.text || '');
-    inner = html`${link ? html`<div class="b-linkcard"><div class="b-linkimg">${ic('image', 22)}</div><div><b>${t('Link preview')}</b><small>${link[0].replace(/^https?:\/\//, '').split('/')[0]}</small></div></div>` : ''}${m.text ? sub(m.text) : html`<span style="opacity:.5">${t('Your message will appear here')}</span>`}`;
+    const linkM = m.preview !== false && /https?:\/\/[^\s]+/.exec(m.text || '');
+    const real = link && link.ok && !link.loading && link.url && (m.text || '').includes(link.url) ? link : null;
+    inner = html`${real ? html`<div class="b-linkcard real">${real.thumb ? html`<img alt="" src="${real.thumb}">` : ''}<div><b>${real.title || t('Link preview')}</b>${real.description ? html`<small class="desc">${real.description}</small>` : ''}<small>${real.url.replace(/^https?:\/\//, '').split('/')[0]}</small></div></div>`
+      : linkM ? html`<div class="b-linkcard"><div class="b-linkimg">${ic('image', 22)}</div><div><b>${t('Link preview')}</b><small>${linkM[0].replace(/^https?:\/\//, '').split('/')[0]}</small></div></div>` : ''}${m.text ? sub(m.text) : html`<span style="opacity:.5">${t('Your message will appear here')}</span>`}`;
   }
   else if (k === 'media') {
     const md = m.media || {};
@@ -163,6 +165,7 @@ export function createComposer(root, opts = {}) {
     mention_all: !!opts.message?.mention_all,
     typing: opts.message?.typing !== false,
     preview: opts.message?.preview !== false,
+    link: null, linkFor: '',
     unique: opts.message?.unique_code || '', uniquePrefix: opts.message?.unique_prefix || '',
     vars: [...new Set([...BASE_VARS, ...(opts.customVars || [])])],
     groupMode: !!opts.groupMode,
@@ -187,6 +190,7 @@ export function createComposer(root, opts = {}) {
         <div class="chat-body" data-preview></div></div>
       </div></div>`.s;
     updatePreview();
+    if (st.kind === 'text' && !st.story) { st.linkFor = ''; checkLinkSoon(); }
   }
 
   function textArea(label, rows = 5) {
@@ -293,9 +297,34 @@ export function createComposer(root, opts = {}) {
         ${cs.length < 10 ? html`<div><button type="button" class="btn sm ghost" data-card-add>${ic('plus', 16)}${t('Add card')}</button></div>` : ''}`;
       }
       default: return html`${textArea(t('Message'), 6)}
-        ${toggle('preview', st.preview, t('Show link preview card'), t('If the message has a link, its title, description and image are fetched and shown as a card (like sending from the phone).'))}`;
+        ${toggle('preview', st.preview, t('Show link preview card'), t('If the message has a link, its title, description and image are fetched and shown as a card (like sending from the phone).'))}
+        <div data-linknote>${linkNote()}</div>`;
     }
   }
+
+  function linkNote() {
+    const l = st.link;
+    if (!l || !st.preview || st.kind !== 'text' || st.story) return '';
+    if (l.loading) return html`<p class="hint">${ic('refresh', 14)} ${t('Checking the link…')}</p>`;
+    const again = html`<button type="button" class="btn sm ghost" data-link-again>${ic('refresh', 14)}${t('Check again')}</button>`;
+    if (!l.ok) return html`<div class="note warn">${ic('alert', 16)}<span class="grow">${l.error || t('Could not check the link.')}</span>${again}</div>`;
+    if (l.has_image) return html`<div class="note ok">${ic('check', 16)}<span class="grow">${t('Preview ready: title and picture found.')}${l.upload === 'failed' ? ' ' + t('(The big picture could not be uploaded right now; a small one will be used.)') : ''}</span>${again}</div>`;
+    return html`<div class="note warn">${ic('alert', 16)}<span class="grow">${l.error ? t('The server could not open this page:') + ' ' + l.error : l.advice || t('No picture found on this page.')}</span>${again}</div>`;
+  }
+  async function checkLink(fresh = false) {
+    const m = /https?:\/\/[^\s<>"']+/.exec(st.text || '');
+    const url = m ? m[0].replace(/[.,;:!?)]+$/, '') : '';
+    if (!url || !st.preview || st.kind !== 'text' || st.story) { if (st.link) { st.link = null; st.linkFor = ''; drawLinkNote(); updatePreview(); } return; }
+    if (url === st.linkFor && !fresh) return;
+    st.linkFor = url; st.link = { loading: true }; drawLinkNote();
+    const sess = typeof opts.session === 'function' ? opts.session() : '';
+    const j = await api('GET', `/api/link-preview?url=${encodeURIComponent(url)}${fresh ? '&fresh=1' : ''}${sess ? '&session=' + encodeURIComponent(sess) : ''}`, undefined, { silent: true });
+    if (st.linkFor !== url) return;
+    st.link = j.ok ? { ...j, ok: true } : { ok: false, error: j.error };
+    drawLinkNote(); updatePreview();
+  }
+  const checkLinkSoon = debounce(() => checkLink(false), 900);
+  function drawLinkNote() { const el = root.querySelector('[data-linknote]'); if (el) el.innerHTML = String(linkNote()); }
 
   function uqBlock() {
     if (st.story) return '';
@@ -326,7 +355,7 @@ export function createComposer(root, opts = {}) {
 
   function updatePreview() {
     const p = root.querySelector('[data-preview]');
-    if (p) p.innerHTML = bubbleHTML(get(true), { story: st.story, bg: st.bg }).s;
+    if (p) p.innerHTML = bubbleHTML(get(true), { story: st.story, bg: st.bg, link: st.link }).s;
     opts.onChange && opts.onChange(get(true));
   }
 
@@ -357,12 +386,13 @@ export function createComposer(root, opts = {}) {
     else return;
     updatePreview();
   });
+  root.addEventListener('input', (e) => { if (e.target.dataset.bind === 'text') checkLinkSoon(); });
   root.addEventListener('change', async (e) => {
     const el = e.target;
     if (el.name === 'mention_all') { st.mention_all = el.checked; updatePreview(); }
     if (el.name === 'unique') { st.unique = el.checked ? 'ref' : ''; drawUq(); updatePreview(); }
     if (el.matches('[data-uq-mode]')) { st.unique = el.value; drawUq(); updatePreview(); }
-    if (el.name === 'preview') { st.preview = el.checked; updatePreview(); }
+    if (el.name === 'preview') { st.preview = el.checked; updatePreview(); checkLink(false); }
     if (el.name === 'poll.multiple') { st.poll.multiple = el.checked; updatePreview(); }
     if (el.dataset.cbtnType != null) { const [i, bi] = el.dataset.cbtnType.split(':'); st.carousel.cards[+i].buttons[+bi].type = el.value; redrawBody(); return; }
     if (el.matches('[data-card-media-url]') && el.value.trim()) { st.carousel.cards[+el.dataset.cardMediaUrl].media = { type: 'image', url: el.value.trim() }; redrawBody(); return; }
@@ -387,6 +417,7 @@ export function createComposer(root, opts = {}) {
   });
   root.addEventListener('click', async (e) => {
     const b = e.target.closest('button'); if (!b || !root.contains(b)) return;
+    if (b.hasAttribute('data-link-again')) { checkLink(true); return; }
     if (b.dataset.kind) { st.kind = b.dataset.kind; if (st.kind === 'media' && !st.media.type) st.media.type = 'image'; draw(); root.querySelector(`[data-kind="${st.kind}"]`)?.focus(); return; }
     if (b.dataset.var || b.hasAttribute('data-var-custom')) {
       let v = b.dataset.var;
