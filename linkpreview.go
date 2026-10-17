@@ -10,7 +10,9 @@ import (
 	_ "image/gif"
 	"image/jpeg"
 	_ "image/png"
+	"encoding/base64"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -59,6 +61,9 @@ type linkUpload struct {
 	at time.Time
 }
 
+// previewLog is set by the manager so preview problems show in the server log.
+var previewLog = slog.New(slog.NewTextHandler(io.Discard, nil))
+
 var (
 	urlRe        = regexp.MustCompile(`(?i)\bhttps?://[^\s<>"'()\[\]{}]+`)
 	previewCache sync.Map // url -> *LinkPreview
@@ -73,11 +78,23 @@ func firstLink(text string) string {
 
 // linkPreview returns a cached or freshly fetched preview (nil if none can be built).
 func linkPreview(ctx context.Context, raw string, allowPrivate bool) *LinkPreview {
-	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" {
+	p := getPreview(ctx, raw, allowPrivate, false)
+	if p == nil || p.Error != "" {
 		return nil
 	}
+	return p
+}
+
+// getPreview is linkPreview that also returns failures (Error set), for diagnostics.
+func getPreview(ctx context.Context, raw string, allowPrivate, fresh bool) *LinkPreview {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return &LinkPreview{URL: raw, Error: "not a valid link"}
+	}
 	key := u.String()
+	if fresh {
+		previewCache.Delete(key)
+	}
 	if v, ok := previewCache.Load(key); ok {
 		p := v.(*LinkPreview)
 		ttl := time.Hour
@@ -85,9 +102,6 @@ func linkPreview(ctx context.Context, raw string, allowPrivate bool) *LinkPrevie
 			ttl = 5 * time.Minute // a slow site gets another chance soon
 		}
 		if time.Since(time.Unix(p.FetchedAt, 0)) < ttl {
-			if p.Error != "" {
-				return nil
-			}
 			return p
 		}
 	}
@@ -95,31 +109,49 @@ func linkPreview(ctx context.Context, raw string, allowPrivate bool) *LinkPrevie
 	case previewSem <- struct{}{}:
 		defer func() { <-previewSem }()
 	case <-ctx.Done():
-		return nil
+		return &LinkPreview{URL: key, Error: "busy, try again"}
 	}
 	fctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
-	p, err := fetchPreview(fctx, key, allowPrivate, uaWhatsApp)
-	if err == nil && p.HQ == nil {
-		// Some sites only give full Open Graph tags to the Facebook crawler.
-		if p2, err2 := fetchPreview(fctx, key, allowPrivate, uaFacebook); err2 == nil && (p2.HQ != nil || p.Title == "") {
-			p = p2
+	// Sites differ in whom they show their tags to: try as WhatsApp, as a
+	// normal browser (Cloudflare and similar often block "bots" on server
+	// IPs), then as the Facebook crawler. Keep the first result with a picture.
+	var p *LinkPreview
+	var firstErr error
+	for _, ua := range []string{uaWhatsApp, uaBrowser, uaFacebook} {
+		got, err := fetchPreview(fctx, key, allowPrivate, ua)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			if fctx.Err() != nil {
+				break
+			}
+			continue
+		}
+		if p == nil || (p.Title == "" && got.Title != "") || got.HQ != nil {
+			p = got
+		}
+		if p.HQ != nil {
+			break
 		}
 	}
-	if err != nil {
-		p = &LinkPreview{URL: key, Error: err.Error()}
+	if p == nil {
+		msg := "could not open the page"
+		if firstErr != nil {
+			msg = firstErr.Error()
+		}
+		p = &LinkPreview{URL: key, Error: msg}
 	}
 	p.FetchedAt = time.Now().Unix()
 	previewCache.Store(key, p)
-	if p.Error != "" {
-		return nil
-	}
 	return p
 }
 
 const (
 	uaWhatsApp = "WhatsApp/2.2445.1 Mozilla/5.0 (compatible; VividRelay/1.0; +https://vividbrandify.com)"
 	uaFacebook = "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)"
+	uaBrowser  = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Mobile Safari/537.36"
 )
 
 func fetchPreview(ctx context.Context, link string, allowPrivate bool, ua string) (*LinkPreview, error) {
@@ -146,7 +178,7 @@ func fetchPreview(ctx context.Context, link string, allowPrivate bool, ua string
 		}
 		return nil, errors.New("not a web page")
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if err != nil {
 		return nil, err
 	}
@@ -389,9 +421,15 @@ func applyLinkPreview(ctx context.Context, cli *whatsmeow.Client, msg *waE2E.Mes
 	if link == "" {
 		return
 	}
-	p := linkPreview(ctx, link, allowPrivate)
-	if p == nil {
+	p := getPreview(ctx, link, allowPrivate, false)
+	if p == nil || p.Error != "" {
+		if p != nil {
+			previewLog.Warn("link preview not added", "url", link, "err", p.Error)
+		}
 		return
+	}
+	if p.HQ == nil {
+		previewLog.Info("link preview has no image (the page gives none we can read)", "url", link, "image", p.Image)
 	}
 	ext := msg.ExtendedTextMessage
 	if ext == nil {
@@ -436,6 +474,7 @@ func (p *LinkPreview) upload(ctx context.Context, cli *whatsmeow.Client) (whatsm
 	defer cancel()
 	up, err := cli.Upload(uctx, p.HQ, whatsmeow.MediaLinkThumbnail)
 	if err != nil {
+		previewLog.Warn("link preview image upload failed (small image only)", "url", p.URL, "err", err)
 		return whatsmeow.UploadResponse{}, false
 	}
 	if p.uploads == nil {
@@ -443,4 +482,48 @@ func (p *LinkPreview) upload(ctx context.Context, cli *whatsmeow.Client) (whatsm
 	}
 	p.uploads[key] = linkUpload{up: up, at: time.Now()}
 	return up, true
+}
+
+// previewTest shows exactly what a link's preview card will contain, so the
+// dashboard can display it before sending: GET /api/link-preview?url=&session=&fresh=1
+func (a *API) previewTest(w http.ResponseWriter, r *http.Request) {
+	link := strings.TrimSpace(r.URL.Query().Get("url"))
+	if l := firstLink(link); l != "" {
+		link = l
+	}
+	if link == "" {
+		writeErr(w, http.StatusBadRequest, "bad_request", errors.New("url is required"))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 40*time.Second)
+	defer cancel()
+	p := getPreview(ctx, link, a.cfg.AllowPrivateURLs, r.URL.Query().Get("fresh") == "1")
+	out := map[string]any{"ok": true, "url": link, "title": p.Title, "description": p.Description, "image": p.Image,
+		"has_image": p.HQ != nil, "error": p.Error}
+	if p.Thumb != nil {
+		out["thumb"] = "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(p.Thumb)
+		out["hq_width"], out["hq_height"], out["hq_kb"] = p.HQW, p.HQH, len(p.HQ)/1024
+	}
+	switch {
+	case p.Error != "":
+		out["advice"] = "The server could not open this page (" + p.Error + "). The message will go without a preview card."
+	case p.HQ == nil && p.Image != "":
+		out["advice"] = "The page names an image but it could not be downloaded or read. Check that the og:image link opens in a browser."
+	case p.HQ == nil:
+		out["advice"] = "The page has no og:image tag, so the card will have no picture. Add <meta property=\"og:image\" content=\"https://…/photo.jpg\"> to the page, or send the photo with the link as its caption."
+	}
+	// With a connected number, also try the image upload WhatsApp needs for the big picture.
+	if name := r.URL.Query().Get("session"); name != "" && p.HQ != nil {
+		pr := principalOf(r)
+		if s, err := a.m.get(name); err == nil && (s.owner() == pr.UserID || pr.Admin()) {
+			if cli, err := s.ready(); err == nil {
+				if _, ok := p.upload(ctx, cli); ok {
+					out["upload"] = "ok"
+				} else {
+					out["upload"] = "failed"
+				}
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 }

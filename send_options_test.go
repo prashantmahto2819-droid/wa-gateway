@@ -1,7 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"image"
+	pngenc "image/png"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"errors"
 	"fmt"
 	"math/rand/v2"
@@ -203,5 +209,44 @@ func TestNoDoubleStatus(t *testing.T) {
 	}
 	if !isPermanent(errDupStatus) {
 		t.Fatal("duplicate status would be retried by the queue")
+	}
+}
+
+func TestLinkPreviewBlockedBotAndEndpoint(t *testing.T) {
+	var png bytes.Buffer
+	img := image.NewRGBA(image.Rect(0, 0, 400, 200))
+	_ = pngenc.Encode(&png, img)
+	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Like a Cloudflare site with bot protection: "bots" get 403, browsers get the page.
+		if !strings.Contains(r.UserAgent(), "Chrome/") {
+			http.Error(w, "blocked", http.StatusForbidden)
+			return
+		}
+		switch r.URL.Path {
+		case "/p":
+			_, _ = w.Write([]byte(`<html><head><meta property="og:title" content="Blocked &amp; found"><meta property="og:image" content="/i.png"></head></html>`))
+		case "/i.png":
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write(png.Bytes())
+		case "/noimg":
+			_, _ = w.Write([]byte(`<html><head><title>No picture</title></head></html>`))
+		}
+	}))
+	defer site.Close()
+	p := getPreview(context.Background(), site.URL+"/p", true, true)
+	if p.Error != "" || p.HQ == nil || p.Title != "Blocked & found" {
+		t.Fatalf("browser fallback: %+v", p)
+	}
+
+	env := newTestEnv(t, nil)
+	env.browser().ok("POST", "/auth/setup", map[string]any{"api_key": testKey, "name": "Owner", "email": "o@example.com", "password": "secret123"})
+	c := env.withKey(testKey)
+	out := c.ok("GET", "/api/link-preview?fresh=1&url="+url.QueryEscape("see "+site.URL+"/p today"), nil)
+	if out["has_image"] != true || !strings.HasPrefix(out["thumb"].(string), "data:image/jpeg;base64,") || out["title"] != "Blocked & found" {
+		t.Fatalf("endpoint: %v", out)
+	}
+	out = c.ok("GET", "/api/link-preview?url="+url.QueryEscape(site.URL+"/noimg"), nil)
+	if out["has_image"] != false || !strings.Contains(out["advice"].(string), "og:image") {
+		t.Fatalf("no-image advice: %v", out)
 	}
 }

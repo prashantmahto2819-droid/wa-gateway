@@ -45,6 +45,7 @@ type Manager struct {
 }
 
 func newManager(ctx context.Context, cfg *Config, db *sql.DB, hooks *Webhooks, lic *Licensing, log *slog.Logger, waLogLevel string) (*Manager, error) {
+	previewLog = log
 	wl := waLog.Stdout("WA", waLogLevel, false)
 	container := sqlstore.NewWithDB(db, "sqlite3", wl.Sub("DB"))
 	if err := container.Upgrade(ctx); err != nil {
