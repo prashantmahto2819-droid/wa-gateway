@@ -102,7 +102,7 @@ func (s *Session) checkLimits(ctx context.Context, r sessionRow, newContact, slo
 		}
 		limit := s.m.cfg.NewContactLimit
 		if slow {
-			limit /= 2
+			limit = max(limit/2, 1)
 		}
 		if n >= limit {
 			return errNewLimit
@@ -418,16 +418,24 @@ func (s *Session) queueStep(ctx context.Context, batch *int) time.Duration {
 		s.finish(ctx, id, campaign, "failed", "bad payload", nil)
 		return 0
 	}
-	// People who said STOP, or already got enough campaign messages this week, are skipped.
+	// Claim the row atomically: a cancel, STOP or pool move may have happened meanwhile.
+	claim, err := s.m.db.ExecContext(ctx, `UPDATE gw_outbox SET status='sending', attempts=attempts+1 WHERE id=? AND session=? AND status='queued'`, id, s.name)
+	if err != nil {
+		return time.Minute
+	}
+	if n, _ := claim.RowsAffected(); n == 0 {
+		return 0
+	}
+	// People who said STOP are skipped; people who got enough campaign messages this week wait.
 	if isOptedOut(ctx, s.m.db, toAddr) {
-		s.finish(ctx, id, campaign, "skipped", "opted_out", nil)
+		s.finish(context.WithoutCancel(ctx), id, campaign, "skipped", "opted_out", nil)
 		return 0
 	}
 	if cfg.PerContactWeekly > 0 && weeklyCount(ctx, s.m.db, toAddr) >= cfg.PerContactWeekly {
-		s.finish(ctx, id, campaign, "skipped", "weekly_limit", nil)
+		_, _ = s.m.db.ExecContext(context.WithoutCancel(ctx), `UPDATE gw_outbox SET status='queued', attempts=attempts-1, error='weekly_limit', not_before=? WHERE id=?`,
+			now.Add(24*time.Hour).Unix(), id)
 		return 0
 	}
-	_, _ = s.m.db.ExecContext(ctx, `UPDATE gw_outbox SET status='sending', attempts=attempts+1 WHERE id=?`, id)
 
 	sctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	res, err := s.send(sctx, &req, sendOpts{slow: slow})
@@ -476,11 +484,14 @@ func (s *Session) finish(ctx context.Context, id int64, campaign, status, errMsg
 	if res != nil {
 		waID, to, nc = res.ID, res.To, b2i(res.NewContact)
 	}
+	now := time.Now().Unix()
 	sentAt := int64(0)
 	if status == "sent" {
-		sentAt = time.Now().Unix()
+		sentAt = now
 	}
-	_, _ = s.m.db.ExecContext(ctx, `UPDATE gw_outbox SET status=?, error=?, wa_id=?, new_contact=?, sent_at=?,
-		to_addr=CASE WHEN ?<>'' THEN ? ELSE to_addr END WHERE id=?`, status, errMsg, waID, nc, sentAt, to, to, id)
+	// Bad numbers / bad media are list problems, not a sign WhatsApp dislikes this number.
+	waErr := b2i(status == "failed" && !isPermanent(errors.New(errMsg)))
+	_, _ = s.m.db.ExecContext(ctx, `UPDATE gw_outbox SET status=?, error=?, wa_id=?, new_contact=?, sent_at=?, finished_at=?, wa_error=?,
+		to_addr=CASE WHEN ?<>'' THEN ? ELSE to_addr END WHERE id=?`, status, errMsg, waID, nc, sentAt, now, waErr, to, to, id)
 	s.hook("queue.status", map[string]any{"queue_id": id, "campaign": campaign, "status": status, "error": errMsg, "wa_id": waID, "to": to})
 }

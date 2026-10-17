@@ -7,7 +7,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -852,6 +854,17 @@ func (a *API) proxyTest(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_proxy", errors.New("no valid proxy to test"))
 		return
 	}
+	if !a.cfg.AllowPrivateURLs {
+		if u, _ := url.Parse(p); u != nil {
+			ips, _ := net.DefaultResolver.LookupIP(r.Context(), "ip", u.Hostname())
+			for _, ip := range ips {
+				if !publicIP(ip) {
+					writeErr(w, http.StatusBadRequest, "bad_proxy", errors.New("proxy points to a private address"))
+					return
+				}
+			}
+		}
+	}
 	info, err := testProxy(r.Context(), p)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "proxy_failed", err)
@@ -911,7 +924,11 @@ func (a *API) removeOptout(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, err)
 		return
 	}
-	res, _ := a.m.db.ExecContext(r.Context(), `DELETE FROM gw_optouts WHERE phone=?`, digitsOf(j.String()))
+	res, err := a.m.db.ExecContext(r.Context(), `DELETE FROM gw_optouts WHERE phone=?`, digitsOf(j.String()))
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
 	n, _ := res.RowsAffected()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "removed": n})
 }

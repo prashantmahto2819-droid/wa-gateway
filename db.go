@@ -42,7 +42,9 @@ CREATE TABLE IF NOT EXISTS gw_outbox (
 	priority    INTEGER NOT NULL DEFAULT 0, -- 2 recent repliers, 1 known, 0 never talked
 	pool        TEXT NOT NULL DEFAULT '',   -- comma list of sessions this row may move between
 	created_at  INTEGER NOT NULL,
-	sent_at     INTEGER NOT NULL DEFAULT 0
+	sent_at     INTEGER NOT NULL DEFAULT 0,
+	finished_at INTEGER NOT NULL DEFAULT 0,
+	wa_error    INTEGER NOT NULL DEFAULT 0  -- 1 = WhatsApp itself refused (counts for health)
 );
 CREATE INDEX IF NOT EXISTS gw_outbox_queue ON gw_outbox(session, status, id);
 CREATE INDEX IF NOT EXISTS gw_outbox_to ON gw_outbox(to_addr, sent_at);
@@ -130,7 +132,7 @@ func cleanup(ctx context.Context, db *sql.DB, retentionDays int) {
 		retentionDays = 30
 	}
 	cut := time.Now().AddDate(0, 0, -retentionDays).Unix()
-	_, _ = db.ExecContext(ctx, `DELETE FROM gw_outbox WHERE status IN ('sent','failed','cancelled') AND created_at<?`, cut)
+	_, _ = db.ExecContext(ctx, `DELETE FROM gw_outbox WHERE status IN ('sent','failed','skipped','cancelled') AND created_at<?`, cut)
 	_, _ = db.ExecContext(ctx, `DELETE FROM gw_numbers WHERE checked_at<?`, time.Now().AddDate(0, 0, -30).Unix())
 }
 
@@ -142,6 +144,8 @@ func migrate(db *sql.DB) error {
 		{"gw_sessions", "health_since", "INTEGER NOT NULL DEFAULT 0"},
 		{"gw_outbox", "priority", "INTEGER NOT NULL DEFAULT 0"},
 		{"gw_outbox", "pool", "TEXT NOT NULL DEFAULT ''"},
+		{"gw_outbox", "finished_at", "INTEGER NOT NULL DEFAULT 0"},
+		{"gw_outbox", "wa_error", "INTEGER NOT NULL DEFAULT 0"},
 	}
 	for _, a := range adds {
 		var n int

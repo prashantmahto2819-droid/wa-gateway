@@ -107,7 +107,8 @@ func TestHealthGuard(t *testing.T) {
 		if status == "sent" {
 			sent = now - 60
 		}
-		_, err := m.db.Exec(`INSERT INTO gw_outbox(session,to_addr,payload,status,new_contact,created_at,sent_at) VALUES('a',?,'{}',?,?,?,?)`, to, status, newc, now-120, sent)
+		_, err := m.db.Exec(`INSERT INTO gw_outbox(session,to_addr,payload,status,new_contact,created_at,sent_at,finished_at,wa_error) VALUES('a',?,'{}',?,?,?,?,?,?)`,
+			to, status, newc, now-120, sent, now-60, b2i(status == "failed"))
 		if err != nil {
 			t.Fatal(err)
 		}

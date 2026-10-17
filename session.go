@@ -151,6 +151,7 @@ func (s *Session) newClient(dev *whatsmeowDevice) *whatsmeow.Client {
 		if err := cli.SetProxyAddress(p); err != nil {
 			// Never fall back to the server's own IP silently.
 			s.m.log.Error("invalid proxy, connection will fail until it is fixed", "session", s.name, "err", err)
+			s.lastErr = "invalid proxy: " + err.Error() // callers hold s.mu
 			cli.SetProxy(func(*http.Request) (*url.URL, error) { return nil, fmt.Errorf("invalid proxy configured: %w", err) })
 		}
 	}

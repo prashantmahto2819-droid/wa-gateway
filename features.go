@@ -207,12 +207,21 @@ func (s *Session) handleKeyword(ctx context.Context, chat types.JID, text string
 	var reply, event string
 	switch {
 	case slices.Contains(cfg.OptoutKeywords, kw):
-		_, _ = s.m.db.ExecContext(ctx, `INSERT OR REPLACE INTO gw_optouts(phone, keyword, session, at) VALUES(?,?,?,?)`, phone, kw, s.name, time.Now().Unix())
+		res, err := s.m.db.ExecContext(ctx, `INSERT OR IGNORE INTO gw_optouts(phone, keyword, session, at) VALUES(?,?,?,?)`, phone, kw, s.name, time.Now().Unix())
+		if err != nil {
+			return
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return // already opted out (e.g. replayed after reconnect): don't reply again
+		}
 		// Cancel anything still waiting for this person.
 		_, _ = s.m.db.ExecContext(ctx, `UPDATE gw_outbox SET status='skipped', error='opted_out' WHERE status='queued' AND to_addr=?`, chat.String())
 		reply, event = cfg.OptoutReply, "contact.optout"
 	case slices.Contains(cfg.OptinKeywords, kw):
-		res, _ := s.m.db.ExecContext(ctx, `DELETE FROM gw_optouts WHERE phone=?`, phone)
+		res, err := s.m.db.ExecContext(ctx, `DELETE FROM gw_optouts WHERE phone=?`, phone)
+		if err != nil {
+			return
+		}
 		if n, _ := res.RowsAffected(); n == 0 {
 			return // wasn't opted out; "start" may just be a normal word
 		}
@@ -279,12 +288,12 @@ func (s *Session) health(ctx context.Context, r sessionRow) Health {
 	since := max(time.Now().Add(-72*time.Hour).Unix(), r.healthSince)
 	h := Health{State: "ok"}
 	_ = s.m.db.QueryRowContext(ctx, `SELECT
-			COALESCE(SUM(status='sent'),0), COALESCE(SUM(status='failed'),0),
+			COALESCE(SUM(status='sent'),0), COALESCE(SUM(status='failed' AND wa_error=1),0),
 			COALESCE(SUM(status='sent' AND new_contact=1),0),
 			COALESCE(SUM(status='sent' AND new_contact=1 AND EXISTS(
 				SELECT 1 FROM gw_contacts c WHERE c.session=o.session AND c.jid=o.to_addr AND c.last_in>o.sent_at)),0)
-		FROM gw_outbox o WHERE session=? AND direct=0 AND ((status='sent' AND sent_at>=?) OR (status='failed' AND created_at>=?))`,
-		s.name, since, since).Scan(&h.Sent, &h.Failed, &h.NewSent, &h.Replied)
+		FROM gw_outbox o WHERE session=? AND direct=0 AND status IN ('sent','failed') AND finished_at>=?`,
+		s.name, since).Scan(&h.Sent, &h.Failed, &h.NewSent, &h.Replied)
 	if total := h.Sent + h.Failed; total > 0 {
 		h.FailRate = float64(h.Failed) / float64(total)
 		if total >= cfg.HealthMinSample && h.FailRate > cfg.HealthMaxFail {
@@ -309,6 +318,9 @@ func (s *Session) applyHealth(ctx context.Context, h Health) {
 	s.mu.Unlock()
 	if h.State == "paused" {
 		_, _ = s.m.db.ExecContext(ctx, `UPDATE gw_sessions SET paused=1, pause_reason=? WHERE name=?`, "health: "+h.Reason, s.name)
+		if changed {
+			go s.m.rebalance(s.name) // pooled messages continue on the other numbers
+		}
 	}
 	if changed {
 		s.m.log.Warn("number health changed", "session", s.name, "state", h.State, "reason", h.Reason)
