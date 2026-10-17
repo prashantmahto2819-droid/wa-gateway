@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/google/uuid"
 	"go.mau.fi/whatsmeow"
 	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -15,11 +14,13 @@ import (
 )
 
 // Carousel: a horizontal set of cards (image + title + text + buttons),
-// sent as an InteractiveMessage with a CarouselMessage. It renders on
-// Android and recent iOS; WhatsApp Web shows it only partly. Because it is
-// the most fragile interactive type, every carousel has a fallback: if
-// WhatsApp refuses it, the gateway sends each card as a normal image
-// message with a numbered caption instead.
+// sent as an InteractiveMessage with a CarouselMessage, the same shape
+// Evolution API 2.4 / evolution-go use (Oct 2026): no ViewOnce wrapper, root
+// header without media, empty ContextInfo (iOS), MessageVersion 1 on the
+// carousel only, and the native_flow "mixed" biz node. Verified renders on
+// Android and WhatsApp Web; on iOS the cards show but buttons may not be
+// tappable, so each card's text also says "reply N". If WhatsApp refuses
+// the carousel, the gateway sends each card as a normal image instead.
 
 type CarouselCard struct {
 	Title   string      `json:"title,omitempty"`
@@ -34,8 +35,8 @@ type CarouselReq struct {
 }
 
 func (c *CarouselReq) validate() error {
-	if len(c.Cards) < 1 || len(c.Cards) > 10 {
-		return errors.New("carousel: give 1-10 cards")
+	if len(c.Cards) < 2 || len(c.Cards) > 10 {
+		return errors.New("carousel: give 2-10 cards (for a single card use buttons with a media header)")
 	}
 	for i := range c.Cards {
 		card := &c.Cards[i]
@@ -122,7 +123,17 @@ func uploadCardMedia(ctx context.Context, cli *whatsmeow.Client, c *CarouselReq,
 func buildCarousel(c *CarouselReq, headers []*waE2E.InteractiveMessage_Header, body string, ci *waE2E.ContextInfo) (*waE2E.Message, []waBinary.Node) {
 	cards := make([]*waE2E.InteractiveMessage, 0, len(c.Cards))
 	for i, card := range c.Cards {
-		cm := &waE2E.InteractiveMessage{Header: headers[i], Body: &waE2E.InteractiveMessage_Body{Text: proto.String(card.Body)}}
+		bodyText := card.Body
+		if n := len(card.Buttons); n > 0 && card.Buttons[0].Type == "reply" {
+			// iPhones show the cards but may not let people tap, so the text
+			// also tells them what to type.
+			var hints []string
+			for _, bt := range card.Buttons {
+				hints = append(hints, fmt.Sprintf("%q", bt.Text))
+			}
+			bodyText = strings.TrimSpace(bodyText + "\n\n" + "Reply " + strings.Join(hints, " / "))
+		}
+		cm := &waE2E.InteractiveMessage{Header: headers[i], Body: &waE2E.InteractiveMessage_Body{Text: proto.String(bodyText)}}
 		if f := strings.TrimSpace(card.Footer); f != "" {
 			cm.Footer = &waE2E.InteractiveMessage_Footer{Text: proto.String(f)}
 		}
@@ -141,11 +152,17 @@ func buildCarousel(c *CarouselReq, headers []*waE2E.InteractiveMessage_Header, b
 			}
 			btns = append(btns, &waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{Name: proto.String(name), ButtonParamsJSON: proto.String(params)})
 		}
+		// Per card: no MessageVersion and plain "{}" params (iOS shows an
+		// "incompatible" notice otherwise).
 		cm.InteractiveMessage = &waE2E.InteractiveMessage_NativeFlowMessage_{NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
-			Buttons: btns, MessageParamsJSON: proto.String(jsonStr(map[string]string{"from": "api", "templateId": uuid.NewString()}))}}
+			Buttons: btns, MessageParamsJSON: proto.String("{}")}}
 		cards = append(cards, cm)
 	}
+	if ci == nil {
+		ci = &waE2E.ContextInfo{} // iOS needs the field present
+	}
 	im := &waE2E.InteractiveMessage{
+		Header:      &waE2E.InteractiveMessage_Header{HasMediaAttachment: proto.Bool(false)},
 		Body:        &waE2E.InteractiveMessage_Body{Text: proto.String(strings.TrimSpace(body))},
 		ContextInfo: ci,
 		InteractiveMessage: &waE2E.InteractiveMessage_CarouselMessage_{CarouselMessage: &waE2E.InteractiveMessage_CarouselMessage{

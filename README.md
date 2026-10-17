@@ -50,7 +50,7 @@ cd wa-gateway
 | हिस्सा | सुविधाएँ |
 |---|---|
 | **Numbers** | QR या pairing code से कई नंबर • हर नंबर का अलग proxy (test के साथ) • call अपने-आप काटना + मैसेज • groups/channels अनदेखा करना • always-online • health (fail rate, reply rate) |
-| **Send** | Text (link हो तो **preview card** अपने-आप — title, description, image), फ़ोटो, वीडियो, document, audio/voice, **poll** (vote का हिसाब), location, contact card, **numbered menu** (जवाब "2" → option), **buttons** (reply / link / call / copy — फ़ोटो header के साथ भी), **list menu** (tap करके चुनें), mention-all, reply/quote, react, edit, delete, **WhatsApp Status** |
+| **Send** | Text (link हो तो **preview card** अपने-आप — title, description, image), फ़ोटो, वीडियो, document, audio/voice, **poll** (vote का हिसाब), location, contact card, **numbered menu** (जवाब "2" → option), **buttons** (reply / link / call / copy — फ़ोटो header के साथ भी), **list menu** (tap करके चुनें), **carousel** (फ़ोटो + buttons वाले 2–10 cards), mention-all, reply/quote, react, edit, delete, **WhatsApp Status** |
 | **Campaigns** | Audience: tags (include/exclude), चुने contacts, पेस्ट किए नंबर, groups, channels, Status • `{{name}}`, `{{city}}` जैसे variables + `{नमस्ते|प्रणाम}` spintax • एक बार / रोज़ / हफ़्ते के दिन / महीने का schedule, "until" तारीख • speed: safe/normal/slow • कई नंबरों में rotation • pause/resume/cancel/duplicate/run-now • CSV report |
 | **Contacts (CRM)** | Tags, custom fields, CSV import (Excel CSV, `;` या tab भी) / export, bulk actions, अपने-आप save (जो मैसेज करे), STOP opt-out सूची, group के members को contacts में save |
 | **Automation** | Auto-reply: welcome (पहला मैसेज), exact keyword, contains, regex, menu choice, कोई भी मैसेज, away (कामकाजी घंटों के बाहर) • cooldown • **AI जवाब** (OpenAI / Gemini / Groq / OpenRouter — ग्राहक की अपनी key) • human takeover (फ़ोन से जवाब देने पर bot उस chat में चुप) |
@@ -60,6 +60,8 @@ cd wa-gateway
 | **Website** | Animated home, features, pricing (plans अपने-आप), docs, about, contact form, privacy/terms/refund (वकील से जँचवाएँ) |
 
 **Buttons के बारे में:** gateway WhatsApp के "native flow" तरीके से buttons भेजता है (Evolution API, neonize आदि यही करते हैं) — Android, iPhone और WhatsApp Web पर दिखते हैं (Windows desktop app पर नहीं)। List के लिए पुराना ListMessage इस्तेमाल होता है, जो हर जगह दिखता है। WhatsApp किसी नंबर के लिए buttons मना कर दे (error 405) तो वही मैसेज अपने-आप numbered text menu बनकर जाता है, और जवाब का हिसाब दोनों में एक-सा रहता है — इसलिए automation कभी नहीं अटकती। सबसे भरोसेमंद अब भी **poll** और **numbered menu** हैं।
+
+**Carousel:** Android और WhatsApp Web पर पूरा चलता है; iPhone पर cards दिखते हैं पर button tap न हो सके, इसलिए हर card के text में भी लिखा जाता है कि क्या reply करें, और typed जवाब भी उसी option से मिल जाता है। WhatsApp मना करे तो हर card एक सामान्य फ़ोटो मैसेज बनकर जाता है।
 
 **Link preview:** मैसेज में link हो तो gateway उस page का title, description और image लाकर card बनाता है (जैसे फ़ोन से भेजने पर दिखता है)। एक link एक घंटे तक cache रहता है, इसलिए 1,000 लोगों के campaign में page एक बार ही खुलता है। `"preview": false` से बंद।
 

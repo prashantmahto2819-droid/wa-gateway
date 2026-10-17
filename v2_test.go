@@ -716,3 +716,55 @@ func TestLinkPreview(t *testing.T) {
 		t.Fatal("private address fetched")
 	}
 }
+
+func TestCarousel(t *testing.T) {
+	c := &CarouselReq{Cards: []CarouselCard{
+		{Title: "Thali", Body: "₹120", Buttons: []ButtonReq{{Text: "Order Thali", ID: "thali"}}},
+		{Title: "Dosa", Body: "₹80", Media: &Media{Type: "image", URL: "https://x/d.jpg"}, Buttons: []ButtonReq{{Type: "url", Text: "Menu", URL: "https://x/menu"}}},
+	}}
+	if err := c.validate(); err != nil {
+		t.Fatal(err)
+	}
+	if (&CarouselReq{Cards: c.Cards[:1]}).validate() == nil {
+		t.Fatal("single card accepted")
+	}
+	headers := []*waE2E.InteractiveMessage_Header{
+		{Title: proto.String("Thali"), HasMediaAttachment: proto.Bool(false)},
+		{Title: proto.String("Dosa"), HasMediaAttachment: proto.Bool(true), Media: &waE2E.InteractiveMessage_Header_ImageMessage{ImageMessage: &waE2E.ImageMessage{URL: proto.String("u")}}},
+	}
+	msg, nodes := buildCarousel(c, headers, "Today's specials", nil)
+	im := msg.GetInteractiveMessage()
+	car := im.GetCarouselMessage()
+	if car == nil || len(car.GetCards()) != 2 || car.GetMessageVersion() != 1 || car.CarouselCardType != nil {
+		t.Fatalf("carousel root: %v", im)
+	}
+	if im.GetHeader() == nil || im.GetHeader().GetHasMediaAttachment() || im.ContextInfo == nil || msg.ViewOnceMessage != nil {
+		t.Fatal("root header/context/wrapper wrong")
+	}
+	c0 := car.GetCards()[0]
+	if c0.GetNativeFlowMessage().MessageVersion != nil || c0.GetNativeFlowMessage().GetMessageParamsJSON() != "{}" {
+		t.Fatalf("card params: %v", c0.GetNativeFlowMessage())
+	}
+	if !strings.Contains(c0.GetBody().GetText(), `Reply "Order Thali"`) {
+		t.Fatalf("iOS hint missing: %q", c0.GetBody().GetText())
+	}
+	if car.GetCards()[1].GetNativeFlowMessage().GetButtons()[0].GetName() != "cta_url" {
+		t.Fatal("cta button on card 2")
+	}
+	if nodes[0].Content.([]waBinary.Node)[0].Content.([]waBinary.Node)[0].Attrs["name"] != "mixed" {
+		t.Fatal("biz node")
+	}
+	if opts := c.menuOptions(); len(opts) != 1 || opts[0].ID != "thali" {
+		t.Fatalf("menu options %v", opts)
+	}
+	r := SendRequest{To: "1", Text: "Specials", Carousel: c}
+	if err := r.validate(); err != nil || r.kind() != "carousel" {
+		t.Fatal(err)
+	}
+	// a Web/iOS tap on a carousel card arrives as a template reply
+	id, text, ok := extractInteractiveReply(&waE2E.Message{TemplateButtonReplyMessage: &waE2E.TemplateButtonReplyMessage{
+		SelectedID: proto.String("thali"), SelectedDisplayText: proto.String("Order Thali"), SelectedCarouselCardIndex: proto.Uint32(0)}})
+	if !ok || id != "thali" || text != "Order Thali" {
+		t.Fatal(id, text, ok)
+	}
+}

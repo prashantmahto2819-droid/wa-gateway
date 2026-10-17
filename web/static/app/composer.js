@@ -4,7 +4,7 @@ import { html, raw, ic, icon, t, esc, api, upload, modal, toast, fmtBytes, fmtTi
 const KINDS = [
   ['text', 'text', 'Text'], ['media', 'image', 'Media'], ['poll', 'poll', 'Poll'],
   ['location', 'pin', 'Location'], ['contact', 'contact', 'Contact card'], ['menu', 'list', 'Menu'],
-  ['buttons', 'check', 'Buttons'], ['list', 'list', 'List'],
+  ['buttons', 'check', 'Buttons'], ['list', 'list', 'List'], ['carousel', 'image', 'Carousel'],
 ];
 const BTN_TYPES = [['reply', 'Reply'], ['url', 'Link'], ['call', 'Call'], ['copy', 'Copy code']];
 const BASE_VARS = ['name', 'phone', 'first_name'];
@@ -18,6 +18,7 @@ export function kindOf(m) {
   if (m.menu) return 'menu';
   if (m.buttons) return 'buttons';
   if (m.list) return 'list';
+  if (m.carousel) return 'carousel';
   if (m.media) return 'media';
   return 'text';
 }
@@ -30,6 +31,7 @@ export function summarize(m) {
   if (k === 'menu') return '☰ ' + (m.menu.title || '') + ' (' + (m.menu.options || []).length + ')';
   if (k === 'buttons') return '🔘 ' + (m.text || m.buttons.title || '') + ' (' + (m.buttons.buttons || []).length + ')';
   if (k === 'list') return '📋 ' + (m.list.title || m.text || '');
+  if (k === 'carousel') return '🎠 ' + (m.text || '') + ' (' + (m.carousel.cards || []).length + ' ' + t('cards') + ')';
   if (k === 'media') return (m.media.type === 'image' ? '🖼 ' : m.media.type === 'video' ? '🎬 ' : m.media.type === 'audio' ? '🎵 ' : '📄 ') + (m.text || m.media.filename || '');
   return m.text || '';
 }
@@ -79,6 +81,13 @@ export function bubbleHTML(m, { vars = {}, story = false, bg = '#0b6e5f' } = {})
     const btns = (bt.buttons || []).filter((b) => (b.text || '').trim());
     return html`<div class="bubble btns">${head}${bt.title ? html`<div><b>${sub(bt.title)}</b></div>` : ''}${m.text ? sub(m.text) : html`<span style="opacity:.5">${t('Message text')}</span>`}${bt.footer ? html`<div class="b-foot">${bt.footer}</div>` : ''}${ts}</div>
       <div class="b-buttons">${(btns.length ? btns : [{ text: t('Button') }]).map((b) => html`<div class="b-btn">${icons[b.type || 'reply'] || ''}${b.text}</div>`)}</div>`;
+  } else if (k === 'carousel') {
+    const cards = (m.carousel?.cards || []);
+    return html`${m.text ? html`<div class="bubble">${sub(m.text)}${ts}</div>` : ''}
+      <div class="b-carousel">${(cards.length ? cards : [{ title: t('Card 1') }, { title: t('Card 2') }]).map((c) => html`<div class="b-card2">
+        <div class="b-media sm">${c.media && c.media.type === 'image' && (c.media.url || c.media.media_id) ? html`<img alt="" src="${mediaSrc(c.media)}">` : ic('image', 22)}</div>
+        <b>${c.title || ''}</b><div class="b-text">${c.body || ''}</div>
+        ${(c.buttons || []).filter((b) => (b.text || '').trim()).map((b) => html`<div class="b-btn">${b.text}</div>`)}</div>`)}</div>`;
   } else if (k === 'list') {
     const l = m.list || {}; const rows = (l.sections || []).flatMap((sec) => sec.rows || []).filter((r) => (r.title || '').trim());
     return html`<div class="bubble btns">${l.title ? html`<div><b>${sub(l.title)}</b></div>` : ''}${m.text ? sub(m.text) : html`<span style="opacity:.5">${t('Message text')}</span>`}${l.footer ? html`<div class="b-foot">${l.footer}</div>` : ''}${ts}</div>
@@ -131,6 +140,8 @@ const kindFromMime = (mime) => (mime.startsWith('image/') ? 'image' : mime.start
  * createComposer(root, opts) → { get(), set(msg), validate() }
  * opts: { message, onChange, groupMode (show mention_all), customVars:[], compact, kinds:[...], previewTitle, story }
  */
+function newCard() { return { title: '', body: '', footer: '', media: null, buttons: [{ type: 'reply', id: '', text: '' }] }; }
+
 export function createComposer(root, opts = {}) {
   const st = {
     kind: kindOf(opts.message),
@@ -143,6 +154,7 @@ export function createComposer(root, opts = {}) {
     menu: opts.message?.menu ? { ...opts.message.menu, options: opts.message.menu.options.map((o) => ({ ...o })) } : { title: '', footer: t('Reply with a number'), options: [{ id: '', text: '' }, { id: '', text: '' }] },
     buttons: opts.message?.buttons ? { ...opts.message.buttons, buttons: opts.message.buttons.buttons.map((b) => ({ ...b })) } : { title: '', footer: '', buttons: [{ type: 'reply', id: '', text: '' }, { type: 'reply', id: '', text: '' }] },
     list: opts.message?.list ? JSON.parse(JSON.stringify(opts.message.list)) : { title: '', button_text: t('Choose'), footer: '', sections: [{ title: '', rows: [{ id: '', title: '', description: '' }, { id: '', title: '', description: '' }] }] },
+    carousel: opts.message?.carousel ? JSON.parse(JSON.stringify(opts.message.carousel)) : { cards: [newCard(), newCard()] },
     mention_all: !!opts.message?.mention_all,
     typing: opts.message?.typing !== false,
     preview: opts.message?.preview !== false,
@@ -251,6 +263,28 @@ export function createComposer(root, opts = {}) {
           <div class="row"><button type="button" class="btn sm ghost" data-row-add="${si}">${ic('plus', 16)}${t('Add row')}</button></div></div>`)}
         <div class="row"><button type="button" class="btn sm ghost" data-sec-add>${ic('plus', 16)}${t('Add section')}</button><span class="hint">${t('Up to 10 rows in total. The person taps the button and picks a row; the row id comes back like a menu choice.')}</span></div>`;
       }
+      case 'carousel': {
+        const cs = st.carousel.cards;
+        return html`${textArea(t('Intro text (shown above the cards)'), 2)}
+        <p class="hint">${t('2–10 cards, each with a photo, title, text and up to 3 buttons. Shows on Android and WhatsApp Web; on iPhone the cards show but buttons may not be tappable, so the text also says what to reply. If WhatsApp refuses the carousel, each card is sent as a normal photo message.')}</p>
+        ${cs.map((c, i) => html`<div class="field list-sec card-edit">
+          <div class="row"><b>${t('Card')} ${i + 1}</b><span class="grow"></span>${cs.length > 2 ? html`<button type="button" class="btn-icon danger" data-card-rm="${i}" aria-label="${t('Remove card')}">${ic('x', 16)}</button>` : ''}</div>
+          <div class="form-grid">
+            <label class="field"><span>${t('Title')}</span><input type="text" data-card="${i}:title" value="${c.title}" maxlength="60"></label>
+            <label class="field"><span>${t('Footer (optional)')}</span><input type="text" data-card="${i}:footer" value="${c.footer || ''}"></label></div>
+          <label class="field"><span>${t('Text')}</span><textarea data-card="${i}:body" rows="2">${c.body}</textarea></label>
+          <div class="row"><span class="field-label">${t('Photo')}:</span>
+            ${c.media && (c.media.media_id || c.media.url) ? html`<span class="ellipsis">${c.media.filename || (c.media.media_id ? t('Library file #{id}', { id: c.media.media_id }) : c.media.url)}</span><button type="button" class="btn sm ghost" data-card-media-clear="${i}">${t('Change')}</button>`
+            : html`<button type="button" class="btn sm" data-card-media-lib="${i}">${ic('image', 14)}${t('Media library')}</button><input type="url" class="grow" data-card-media-url="${i}" placeholder="https://…/photo.jpg" aria-label="${t('Photo link')}">`}</div>
+          <div class="opt-rows">${c.buttons.map((b, bi) => html`<div class="opt-row btn-row">
+            <select data-cbtn-type="${i}:${bi}">${BTN_TYPES.map(([v, l]) => html`<option value="${v}" ${b.type === v ? 'selected' : ''}>${t(l)}</option>`)}</select>
+            <input type="text" data-cbtn="${i}:${bi}:text" value="${b.text}" maxlength="25" placeholder="${t('Button text')}">
+            <input type="text" data-cbtn="${i}:${bi}:val" value="${b.type === 'url' ? (b.url || '') : b.type === 'call' ? (b.phone || '') : b.type === 'copy' ? (b.code || '') : (b.id || '')}" placeholder="${b.type === 'url' ? 'https://…' : b.type === 'call' ? '9198…' : b.type === 'copy' ? t('Code') : 'id'}">
+            <button type="button" class="btn-icon danger" data-cbtn-rm="${i}:${bi}" aria-label="${t('Remove button')}" ${c.buttons.length <= 1 ? 'disabled' : ''}>${ic('x', 16)}</button></div>`)}</div>
+          ${c.buttons.length < 3 ? html`<div><button type="button" class="btn sm ghost" data-cbtn-add="${i}">${ic('plus', 14)}${t('Add button')}</button></div>` : ''}
+        </div>`)}
+        ${cs.length < 10 ? html`<div><button type="button" class="btn sm ghost" data-card-add>${ic('plus', 16)}${t('Add card')}</button></div>` : ''}`;
+      }
       default: return html`${textArea(t('Message'), 6)}
         ${toggle('preview', st.preview, t('Show link preview card'), t('If the message has a link, its title, description and image are fetched and shown as a card (like sending from the phone).'))}`;
     }
@@ -297,6 +331,8 @@ export function createComposer(root, opts = {}) {
     else if (el.dataset.btnText != null) st.buttons.buttons[+el.dataset.btnText].text = el.value;
     else if (el.dataset.btnVal != null) { const b = st.buttons.buttons[+el.dataset.btnVal]; const v = el.value; if (b.type === 'url') b.url = v; else if (b.type === 'call') b.phone = v; else if (b.type === 'copy') b.code = v; else b.id = v.replace(/\s+/g, '_').toLowerCase(); }
     else if (el.dataset.secTitle != null) st.list.sections[+el.dataset.secTitle].title = el.value;
+    else if (el.dataset.card != null) { const [i, f] = el.dataset.card.split(':'); st.carousel.cards[+i][f] = el.value; }
+    else if (el.dataset.cbtn != null) { const [i, bi, f] = el.dataset.cbtn.split(':'); const b = st.carousel.cards[+i].buttons[+bi]; if (f === 'text') b.text = el.value; else if (b.type === 'url') b.url = el.value; else if (b.type === 'call') b.phone = el.value; else if (b.type === 'copy') b.code = el.value; else b.id = el.value.replace(/\s+/g, '_').toLowerCase(); }
     else if (el.dataset.row != null) { const [si, ri, f] = el.dataset.row.split(':'); st.list.sections[+si].rows[+ri][f] = f === 'id' ? el.value.replace(/\s+/g, '_').toLowerCase() : el.value; }
     else if (el.name === 'mention_all') st.mention_all = el.checked;
     else if (el.name === 'preview') st.preview = el.checked;
@@ -309,6 +345,8 @@ export function createComposer(root, opts = {}) {
     if (el.name === 'mention_all') { st.mention_all = el.checked; updatePreview(); }
     if (el.name === 'preview') { st.preview = el.checked; updatePreview(); }
     if (el.name === 'poll.multiple') { st.poll.multiple = el.checked; updatePreview(); }
+    if (el.dataset.cbtnType != null) { const [i, bi] = el.dataset.cbtnType.split(':'); st.carousel.cards[+i].buttons[+bi].type = el.value; redrawBody(); return; }
+    if (el.matches('[data-card-media-url]') && el.value.trim()) { st.carousel.cards[+el.dataset.cardMediaUrl].media = { type: 'image', url: el.value.trim() }; redrawBody(); return; }
     if (el.dataset.btnType != null) { const b = st.buttons.buttons[+el.dataset.btnType]; b.type = el.value; redrawBody(); return; }
     if (el.matches('[data-media-url]') && el.value.trim()) { st.media.url = el.value.trim(); delete st.media.media_id; redrawBody(); }
     if (el.matches('[data-media-file]') && el.files[0]) {
@@ -349,6 +387,12 @@ export function createComposer(root, opts = {}) {
     if (b.dataset.menuRm != null) { st.menu.options.splice(+b.dataset.menuRm, 1); redrawBody(); return; }
     if (b.hasAttribute('data-btn-add')) { const first = st.buttons.buttons[0]; st.buttons.buttons.push({ type: first && first.type !== 'reply' ? 'url' : 'reply', id: '', text: '' }); redrawBody(); focusLast('[data-btn-text]'); return; }
     if (b.dataset.btnRm != null) { st.buttons.buttons.splice(+b.dataset.btnRm, 1); redrawBody(); return; }
+    if (b.hasAttribute('data-card-add')) { st.carousel.cards.push(newCard()); redrawBody(); return; }
+    if (b.dataset.cardRm != null) { st.carousel.cards.splice(+b.dataset.cardRm, 1); redrawBody(); return; }
+    if (b.dataset.cardMediaClear != null) { st.carousel.cards[+b.dataset.cardMediaClear].media = null; redrawBody(); return; }
+    if (b.dataset.cardMediaLib != null) { const x = await pickMedia({ kind: 'image' }); if (x) { st.carousel.cards[+b.dataset.cardMediaLib].media = { type: 'image', media_id: x.id, filename: x.name }; redrawBody(); } return; }
+    if (b.dataset.cbtnAdd != null) { st.carousel.cards[+b.dataset.cbtnAdd].buttons.push({ type: 'reply', id: '', text: '' }); redrawBody(); return; }
+    if (b.dataset.cbtnRm != null) { const [i, bi] = b.dataset.cbtnRm.split(':'); st.carousel.cards[+i].buttons.splice(+bi, 1); redrawBody(); return; }
     if (b.hasAttribute('data-sec-add')) { st.list.sections.push({ title: '', rows: [{ id: '', title: '', description: '' }] }); redrawBody(); return; }
     if (b.dataset.secRm != null) { st.list.sections.splice(+b.dataset.secRm, 1); redrawBody(); return; }
     if (b.dataset.rowAdd != null) { st.list.sections[+b.dataset.rowAdd].rows.push({ id: '', title: '', description: '' }); redrawBody(); return; }
@@ -399,6 +443,19 @@ export function createComposer(root, opts = {}) {
         if (st.media.media_id || st.media.url) m.media = cleanMedia(st.media);
         break;
       }
+      case 'carousel': {
+        m.text = st.text;
+        m.carousel = { cards: st.carousel.cards.map((c, i) => {
+          const o = { title: c.title, body: c.body, footer: c.footer || undefined };
+          if (c.media && (c.media.media_id || c.media.url)) o.media = c.media.media_id ? { type: 'image', media_id: c.media.media_id } : { type: 'image', url: c.media.url };
+          o.buttons = c.buttons.filter((b) => forPreview || (b.text || '').trim()).map((b, bi) => {
+            const x = { type: b.type || 'reply', text: (b.text || '').trim() };
+            if (x.type === 'reply') x.id = b.id || `c${i + 1}_${bi + 1}`; if (x.type === 'url') x.url = b.url || ''; if (x.type === 'call') x.phone = b.phone || ''; if (x.type === 'copy') x.code = b.code || '';
+            return x; });
+          if (!o.buttons.length) delete o.buttons;
+          return o; }) };
+        break;
+      }
       case 'list': {
         m.text = st.text;
         m.list = { title: st.list.title, button_text: st.list.button_text, footer: st.list.footer,
@@ -440,6 +497,15 @@ export function createComposer(root, opts = {}) {
         if (m.media && m.media.type === 'audio') return t('Buttons can have an image, video or document header, not audio.');
         break;
       }
+      case 'carousel': {
+        if (m.carousel.cards.length < 2) return t('A carousel needs at least 2 cards.');
+        for (const [i, c] of m.carousel.cards.entries()) {
+          if (!(c.title || '').trim() && !(c.body || '').trim()) return t('Card {n} needs a title or text.', { n: i + 1 });
+          const kinds = new Set((c.buttons || []).map((b) => (b.type === 'reply' ? 'reply' : 'cta')));
+          if (kinds.size > 1) return t('Card {n}: reply buttons can\'t be mixed with link/call/copy buttons.', { n: i + 1 });
+        }
+        break;
+      }
       case 'list': {
         if (!m.text.trim()) return t('Write the message text.');
         const rows = m.list.sections.flatMap((s2) => s2.rows);
@@ -459,6 +525,7 @@ export function createComposer(root, opts = {}) {
     if (msg?.menu) st.menu = { ...msg.menu, options: msg.menu.options.map((o) => ({ ...o })) };
     if (msg?.buttons) st.buttons = { ...msg.buttons, buttons: msg.buttons.buttons.map((b) => ({ ...b })) };
     if (msg?.list) st.list = JSON.parse(JSON.stringify(msg.list));
+    if (msg?.carousel) st.carousel = JSON.parse(JSON.stringify(msg.carousel));
     st.mention_all = !!msg?.mention_all;
     st.preview = msg?.preview !== false;
     draw();

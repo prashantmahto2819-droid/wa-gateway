@@ -759,3 +759,9 @@ dl.kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .b-linkcard { display: flex; gap: 10px; align-items: center; background: rgba(0,0,0,.06); border-radius: 8px; padding: 8px; margin-bottom: 6px; }
 .b-linkcard small { display: block; color: var(--muted); }
 .b-linkimg { width: 44px; height: 44px; border-radius: 6px; background: rgba(0,0,0,.08); display: grid; place-items: center; flex: 0 0 auto; }
+.b-carousel { display: flex; gap: 8px; overflow-x: auto; padding: 4px 0 6px; max-width: 100%; }
+.b-card2 { flex: 0 0 150px; background: var(--surface, #fff); border: 1px solid var(--line); border-radius: 10px; padding: 8px; font-size: 12px; display: flex; flex-direction: column; gap: 4px; }
+.b-card2 .b-media.sm { height: 80px; border-radius: 6px; overflow: hidden; display: grid; place-items: center; background: rgba(0,0,0,.06); }
+.b-card2 .b-media.sm img { width: 100%; height: 100%; object-fit: cover; }
+.b-card2 .b-btn { padding: 5px; font-size: 12px; }
+.card-edit textarea { width: 100%; }

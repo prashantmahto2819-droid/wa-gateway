@@ -52,6 +52,9 @@ Message   { // used by send, templates, campaigns, auto-replies (exactly one mai
             //   button types: reply {id,text} | url {text,url} | call {text,phone} | copy {text,code}; max 3; reply and url/call/copy can't be mixed;
             //   buttons may be combined with "media" (image/video/document header). If WhatsApp refuses buttons (405) the gateway sends a numbered text menu instead → response has fallback:true
             "list":{"title":"Menu","button_text":"Choose","footer":"","sections":[{"title":"Food","rows":[{"id":"thali","title":"Thali","description":"₹120"}]}]},  // max 10 rows total, needs "text"
+            "carousel":{"cards":[{"title":"Thali","body":"₹120","footer":"","media":{"type":"image","media_id":12},"buttons":[{"type":"reply","id":"thali","text":"Order"}]}, {"title":"Dosa","body":"₹80","media":{"type":"image","url":"https://…/dosa.jpg"},"buttons":[{"type":"url","text":"Menu","url":"https://…"}]}]},
+            //   carousel: 2–10 cards, each: title/body/footer, image (or video), up to 3 buttons (same rules as "buttons"); "text" is the intro above the cards.
+            //   Renders on Android + WhatsApp Web; iPhone shows cards but may not allow taps (card text also says what to reply). Refused → each card sent as a photo message (fallback:true).
             "preview":true,  // text messages: fetch title/description/image of the first link and attach a preview card (default true)
             "mentions":["9198…"], "mention_all":false, "reply_to":{"id":"","sender":"","text":""}, "vars":{}, "typing":true }
 Contact   { "id":1, "phone":"919876543210", "name":"", "email":"", "tags":["vip"], "notes":"", "custom":{"city":"Korba"},
