@@ -47,6 +47,11 @@ type SendRequest struct {
 	Background string       `json:"background,omitempty"`  // text Status background colour (#RRGGBB)
 
 	StatusAudience *StatusAudience `json:"status_audience,omitempty"` // Status only: who sees it
+	// UniqueCode adds a different code under every message so no two are
+	// identical: "ref" → "Ref: 7KQ3XP", "number" → "#482913". UniquePrefix
+	// replaces "Ref:" / "#". {{ref}} and {{random}} also work anywhere in the text.
+	UniqueCode   string `json:"unique_code,omitempty"`
+	UniquePrefix string `json:"unique_prefix,omitempty"`
 	// Variants: other versions of this message; each recipient gets one of
 	// [this message + variants] at random (campaigns and API sends).
 	Variants []SendRequest `json:"variants,omitempty"`
@@ -142,6 +147,14 @@ func (r *SendRequest) validateContent() error {
 		if err := v.validateContent(); err != nil {
 			return fmt.Errorf("variant %d: %w", i+2, err)
 		}
+	}
+	switch r.UniqueCode {
+	case "", "ref", "number":
+	default:
+		return errors.New("unique_code must be ref or number")
+	}
+	if len([]rune(r.UniquePrefix)) > 30 {
+		return errors.New("unique_prefix is too long (30 characters max)")
 	}
 	if a := r.StatusAudience; a != nil {
 		switch a.Mode {
@@ -291,9 +304,64 @@ var (
 
 // renderText fills {{vars}} and then picks one option from each {a|b|c}
 // group, so a campaign doesn't send the exact same words to everyone.
+const refAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789" // no 0/O/1/I mix-ups
+
+func randomRef(rnd *rand.Rand) string {
+	b := make([]byte, 6)
+	for i := range b {
+		b[i] = refAlphabet[rnd.IntN(len(refAlphabet))]
+	}
+	return string(b)
+}
+
+func randomNumber(rnd *rand.Rand) string { return fmt.Sprintf("%06d", 100000+rnd.IntN(900000)) }
+
+// withUniqueCode adds the per-message code line under the text.
+func withUniqueCode(text, mode, prefix string, rnd *rand.Rand) string {
+	var line string
+	switch mode {
+	case "ref":
+		if prefix == "" {
+			prefix = "Ref:"
+		}
+		line = strings.TrimSpace(prefix + " " + randomRef(rnd))
+	case "number":
+		if prefix == "" {
+			prefix = "#"
+		}
+		sep := " "
+		if strings.HasSuffix(prefix, "#") {
+			sep = ""
+		}
+		line = strings.TrimSpace(prefix + sep + randomNumber(rnd))
+	default:
+		return text
+	}
+	if strings.TrimSpace(text) == "" {
+		return line
+	}
+	return strings.TrimRight(text, " \n") + "\n\n" + line
+}
+
 func renderText(t string, vars map[string]string, rnd *rand.Rand) string {
 	if t == "" {
 		return t
+	}
+	// Built-in per-message values (a fresh one for every recipient).
+	if strings.Contains(t, "{{") {
+		t = varRe.ReplaceAllStringFunc(t, func(m string) string {
+			switch strings.ToLower(varRe.FindStringSubmatch(m)[1]) {
+			case "ref":
+				if _, own := vars["ref"]; !own {
+					return randomRef(rnd)
+				}
+			case "random":
+				if _, own := vars["random"]; !own {
+					return randomNumber(rnd)
+				}
+			}
+			return m
+		})
 	}
 	if len(vars) > 0 {
 		low := make(map[string]string, len(vars))

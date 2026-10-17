@@ -7,8 +7,9 @@ const KINDS = [
   ['buttons', 'check', 'Buttons'], ['list', 'list', 'List'], ['carousel', 'image', 'Carousel'],
 ];
 const BTN_TYPES = [['reply', 'Reply'], ['url', 'Link'], ['call', 'Call'], ['copy', 'Copy code']];
-const BASE_VARS = ['name', 'phone', 'first_name'];
-const SAMPLE = { name: 'Asha Verma', first_name: 'Asha', phone: '+91 98765 43210', city: 'Korba' };
+const BASE_VARS = ['name', 'phone', 'first_name', 'ref', 'random'];
+const NO_TEXT = ['poll', 'location', 'contact'];
+const SAMPLE = { name: 'Asha Verma', first_name: 'Asha', phone: '+91 98765 43210', city: 'Korba', ref: '7KQ3XP', random: '482913' };
 
 export function kindOf(m) {
   if (!m) return 'text';
@@ -42,6 +43,10 @@ export function bubbleHTML(m, { vars = {}, story = false, bg = '#0b6e5f' } = {})
   const now = fmtTime(Date.now() / 1000);
   const ts = raw(`<span class="ts">${esc(now)} ${icon('check', 12)}</span>`);
   const k = kindOf(m);
+  if (!story && m.unique_code && !NO_TEXT.includes(k)) {
+    const line = m.unique_code === 'number' ? ((m.unique_prefix || '#') + ((m.unique_prefix || '#').endsWith('#') ? '' : ' ') + SAMPLE.random) : ((m.unique_prefix || 'Ref:') + ' ' + SAMPLE.ref);
+    m = { ...m, text: (m.text ? m.text.replace(/\s+$/, '') + '\n\n' : '') + line };
+  }
   if (story) {
     if (m.media && m.media.type === 'image' && (m.media.url || m.media.media_id)) {
       return html`<div class="bubble story" style="background:#000;padding:0;overflow:hidden"><img alt="" src="${mediaSrc(m.media)}" style="width:100%;max-height:300px;object-fit:cover"></div>${m.text ? html`<div class="chat-note">${m.text}</div>` : ''}`;
@@ -158,6 +163,7 @@ export function createComposer(root, opts = {}) {
     mention_all: !!opts.message?.mention_all,
     typing: opts.message?.typing !== false,
     preview: opts.message?.preview !== false,
+    unique: opts.message?.unique_code || '', uniquePrefix: opts.message?.unique_prefix || '',
     vars: [...new Set([...BASE_VARS, ...(opts.customVars || [])])],
     groupMode: !!opts.groupMode,
     story: !!opts.story, bg: '#0b6e5f',
@@ -172,6 +178,7 @@ export function createComposer(root, opts = {}) {
           ${kinds.map(([k, i, l]) => html`<button type="button" role="tab" data-kind="${k}" aria-selected="${st.kind === k}">${ic(i, 16)}${t(l)}</button>`)}
         </div>`}
         <div data-kind-body>${kindBody()}</div>
+        <div data-uq ${NO_TEXT.includes(st.kind) ? 'hidden' : ''}>${uqBlock()}</div>
         ${st.groupMode && !st.story ? toggle('mention_all', st.mention_all, t('Mention everyone in the group'), t('Each member gets a notification. Use rarely.')) : ''}
       </div>
       <div class="preview" aria-label="${t('Preview')}">
@@ -290,6 +297,15 @@ export function createComposer(root, opts = {}) {
     }
   }
 
+  function uqBlock() {
+    if (st.story) return '';
+    return html`${toggle('unique', !!st.unique, t('Add a unique code under every message'), t('Each person gets a different code at the bottom (e.g. Ref: 7KQ3XP), so no two messages are exactly alike. Or put {{ref}} / {{random}} anywhere in the text.'))}
+      ${st.unique ? html`<div class="row" style="gap:10px;margin:-2px 0 6px 48px">
+        <select data-uq-mode aria-label="${t('Code style')}" style="max-width:300px"><option value="ref" ${st.unique === 'ref' ? 'selected' : ''}>${t('Letters and digits — Ref: 7KQ3XP')}</option><option value="number" ${st.unique === 'number' ? 'selected' : ''}>${t('Number — #482913')}</option></select>
+        <input type="text" data-uq-prefix maxlength="30" value="${st.uniquePrefix}" placeholder="${st.unique === 'number' ? '#' : 'Ref:'}" aria-label="${t('Text before the code')}" style="max-width:160px"></div>` : ''}`;
+  }
+  function drawUq() { const el = root.querySelector('[data-uq]'); if (el) { el.innerHTML = uqBlock().s; el.hidden = NO_TEXT.includes(st.kind); } }
+
   function mediaBlock() {
     const md = st.media;
     const has = md.media_id || md.url;
@@ -334,6 +350,7 @@ export function createComposer(root, opts = {}) {
     else if (el.dataset.card != null) { const [i, f] = el.dataset.card.split(':'); st.carousel.cards[+i][f] = el.value; }
     else if (el.dataset.cbtn != null) { const [i, bi, f] = el.dataset.cbtn.split(':'); const b = st.carousel.cards[+i].buttons[+bi]; if (f === 'text') b.text = el.value; else if (b.type === 'url') b.url = el.value; else if (b.type === 'call') b.phone = el.value; else if (b.type === 'copy') b.code = el.value; else b.id = el.value.replace(/\s+/g, '_').toLowerCase(); }
     else if (el.dataset.row != null) { const [si, ri, f] = el.dataset.row.split(':'); st.list.sections[+si].rows[+ri][f] = f === 'id' ? el.value.replace(/\s+/g, '_').toLowerCase() : el.value; }
+    else if (el.matches('[data-uq-prefix]')) st.uniquePrefix = el.value;
     else if (el.name === 'mention_all') st.mention_all = el.checked;
     else if (el.name === 'preview') st.preview = el.checked;
     else if (el.name === 'poll.multiple') st.poll.multiple = el.checked;
@@ -343,6 +360,8 @@ export function createComposer(root, opts = {}) {
   root.addEventListener('change', async (e) => {
     const el = e.target;
     if (el.name === 'mention_all') { st.mention_all = el.checked; updatePreview(); }
+    if (el.name === 'unique') { st.unique = el.checked ? 'ref' : ''; drawUq(); updatePreview(); }
+    if (el.matches('[data-uq-mode]')) { st.unique = el.value; drawUq(); updatePreview(); }
     if (el.name === 'preview') { st.preview = el.checked; updatePreview(); }
     if (el.name === 'poll.multiple') { st.poll.multiple = el.checked; updatePreview(); }
     if (el.dataset.cbtnType != null) { const [i, bi] = el.dataset.cbtnType.split(':'); st.carousel.cards[+i].buttons[+bi].type = el.value; redrawBody(); return; }
@@ -464,6 +483,7 @@ export function createComposer(root, opts = {}) {
       }
     }
     if (st.groupMode && st.mention_all) m.mention_all = true;
+    if (st.unique && !NO_TEXT.includes(st.kind)) { m.unique_code = st.unique; if (st.uniquePrefix.trim()) m.unique_prefix = st.uniquePrefix.trim(); }
     m.typing = st.typing;
     if (st.kind === 'text' && !st.preview) m.preview = false;
     return m;
@@ -528,10 +548,15 @@ export function createComposer(root, opts = {}) {
     if (msg?.carousel) st.carousel = JSON.parse(JSON.stringify(msg.carousel));
     st.mention_all = !!msg?.mention_all;
     st.preview = msg?.preview !== false;
+    st.unique = msg?.unique_code || ''; st.uniquePrefix = msg?.unique_prefix || '';
+    draw();
+  }
+  function reset() {
+    st.text = ''; st.media = { type: 'image', url: '' }; st.mediaName = '';
     draw();
   }
   function setGroupMode(on) { if (st.groupMode !== !!on) { st.groupMode = !!on; draw(); } }
   function setStory(on) { if (st.story !== !!on) { st.story = !!on; draw(); } }
   draw();
-  return { get, set, validate, setGroupMode, setStory };
+  return { get, set, reset, validate, setGroupMode, setStory };
 }

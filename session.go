@@ -39,6 +39,7 @@ var (
 	errTimelocked    = errors.New("WhatsApp is temporarily blocking messages to new contacts (error 463); only people who already chatted with this number can be messaged right now")
 	errDailyLimit    = errors.New("daily sending limit reached for this number")
 	errNewLimit      = errors.New("daily limit for new contacts reached")
+	errDupStatus     = errors.New("this exact Status was already posted from this number in the last 30 minutes (not posted again)")
 	errAlreadyLinked = errors.New("session is already linked; log out first")
 )
 
@@ -46,6 +47,9 @@ type Session struct {
 	name    string
 	m       *Manager
 	ownerID atomic.Int64
+
+	statusMu   sync.Mutex
+	statusSeen map[string]time.Time // fingerprint of recent Status posts → when (no double posts)
 
 	mu         sync.Mutex
 	client     *whatsmeow.Client

@@ -124,6 +124,8 @@ Users see only their own sessions. `name` is generated for users (`u<id>-<slug>`
 
 **Message variants:** any Message may carry `variants:[Message,…]` (up to 9). Each recipient gets the main message or one variant at random; `to`, `vars` and `reply_to` always come from the main message. Spintax `{Hi|Hello}` still works inside each version.
 
+**Unique code:** `unique_code:"ref"` adds a line like `Ref: 7KQ3XP` under the text (or caption / button / list body), `"number"` adds `#482913`; `unique_prefix` changes the label. Every recipient gets a different code. `{{ref}}` and `{{random}}` can also be used anywhere in the text. Not added to polls, locations, contact cards or Status.
+
 **Status audience:** a linked device must encrypt a Status separately for every contact device, and WhatsApp refuses very large lists, so each post goes to at most `STATUS_MAX_RECIPIENTS` people (default 1000, max 5000). `status_audience:{mode, tags?, phones?, limit?}` — `mode:"auto"` (default: people who wrote to this number most recently, then your saved contacts, then the phone's named contacts A–Z), `"tags"` (contacts with any of `tags`) or `"phones"` (exactly `phones`). If the phone's Status privacy is "Only share with…", WhatsApp's own list is used instead.
 `menu` is sent as a numbered list ("1. Price list…"); when the person replies with the number, the `message` webhook includes `menu_choice:{id,text}` and `menu`-trigger auto-replies fire.
 `buttons` and `list` are real interactive messages (native flow / list). A tap arrives as a `message` webhook with `type:"button_reply"|"list_reply"`, `button_id` and `menu_choice:{id,text}`, so the same `menu`-trigger auto-replies work for menus, buttons and lists. Not available for channels or Status.

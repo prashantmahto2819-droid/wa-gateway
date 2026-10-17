@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"sort"
@@ -36,7 +39,51 @@ func (r *SendRequest) variant(n int) *SendRequest {
 	if v.Background == "" {
 		v.Background = r.Background
 	}
+	if v.UniqueCode == "" {
+		v.UniqueCode, v.UniquePrefix = r.UniqueCode, r.UniquePrefix
+	}
 	return &v
+}
+
+// ======================= no double Status posts =======================
+
+// statusFingerprint identifies a Status by its content (text, media, colour).
+func statusFingerprint(req *SendRequest) string {
+	h := sha256.New()
+	fmt.Fprintf(h, "%s\x00%s\x00", req.Text, req.Background)
+	if m := req.Media; m != nil {
+		fmt.Fprintf(h, "%s\x00%s\x00%d\x00", m.Type, m.URL, m.MediaID)
+		h.Write([]byte(m.Base64))
+		h.Write(m.data)
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// claimStatus records a Status about to be posted; false if the same one
+// was posted (or is being posted) from this number in the last 30 minutes.
+func (s *Session) claimStatus(fp string) bool {
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
+	now := time.Now()
+	for k, at := range s.statusSeen {
+		if now.Sub(at) > 30*time.Minute {
+			delete(s.statusSeen, k)
+		}
+	}
+	if _, dup := s.statusSeen[fp]; dup {
+		return false
+	}
+	if s.statusSeen == nil {
+		s.statusSeen = map[string]time.Time{}
+	}
+	s.statusSeen[fp] = now
+	return true
+}
+
+func (s *Session) releaseStatus(fp string) {
+	s.statusMu.Lock()
+	delete(s.statusSeen, fp)
+	s.statusMu.Unlock()
 }
 
 // ======================= Status audience =======================

@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -132,5 +135,73 @@ func TestCampaignRotationAndStatusSchedule(t *testing.T) {
 	}
 	if res.PerSession[a] == 0 || res.PerSession[b] == 0 || res.PerSession[a]+res.PerSession[b] != 40 {
 		t.Fatalf("random rotation: %v", res.PerSession)
+	}
+}
+
+func TestUniqueCode(t *testing.T) {
+	rnd := rand.New(rand.NewPCG(1, 2))
+	seen := map[string]bool{}
+	for i := 0; i < 500; i++ {
+		out := withUniqueCode("Diwali offer!\n", "ref", "", rnd)
+		if !strings.HasPrefix(out, "Diwali offer!\n\nRef: ") || len(out) != len("Diwali offer!\n\nRef: ")+6 {
+			t.Fatalf("ref line: %q", out)
+		}
+		if seen[out] {
+			t.Fatalf("duplicate code after %d messages", i)
+		}
+		seen[out] = true
+	}
+	if out := withUniqueCode("Hi", "number", "", rnd); !regexp.MustCompile(`^Hi\n\n#\d{6}$`).MatchString(out) {
+		t.Fatalf("number line: %q", out)
+	}
+	if out := withUniqueCode("Hi", "number", "Code:", rnd); !regexp.MustCompile(`^Hi\n\nCode: \d{6}$`).MatchString(out) {
+		t.Fatalf("custom prefix: %q", out)
+	}
+	if out := withUniqueCode("", "ref", "ID", rnd); !regexp.MustCompile(`^ID [A-Z2-9]{6}$`).MatchString(out) {
+		t.Fatalf("empty text: %q", out)
+	}
+	if withUniqueCode("Hi", "", "", rnd) != "Hi" {
+		t.Fatal("code added when off")
+	}
+	got := renderText("Order {{ref}} / token {{random}} for {{name}}", map[string]string{"name": "Asha"}, rnd)
+	if !regexp.MustCompile(`^Order [A-Z2-9]{6} / token \d{6} for Asha$`).MatchString(got) {
+		t.Fatalf("built-in vars: %q", got)
+	}
+	if got := renderText("{{ref}}", map[string]string{"ref": "MINE"}, rnd); got != "MINE" {
+		t.Fatalf("own ref var overridden: %q", got)
+	}
+	if (&SendRequest{Text: "x", UniqueCode: "emoji"}).validateContent() == nil {
+		t.Fatal("bad unique_code accepted")
+	}
+	v := (&SendRequest{Text: "a", UniqueCode: "ref", Variants: []SendRequest{{Text: "b"}}}).variant(1)
+	if v.UniqueCode != "ref" {
+		t.Fatal("variant lost unique code")
+	}
+}
+
+func TestNoDoubleStatus(t *testing.T) {
+	s := &Session{}
+	a := &SendRequest{Text: "Shubh Diwali", Background: "#075E54"}
+	b := &SendRequest{Text: "Shubh Diwali", Background: "#075E54", Media: &Media{Type: "image", MediaID: 7}}
+	fa, fb := statusFingerprint(a), statusFingerprint(b)
+	if fa == fb {
+		t.Fatal("photo status has the same fingerprint as text status")
+	}
+	if !s.claimStatus(fa) || s.claimStatus(fa) {
+		t.Fatal("second identical post was not refused")
+	}
+	if !s.claimStatus(fb) {
+		t.Fatal("different status refused")
+	}
+	s.releaseStatus(fa) // a failed post can be tried again
+	if !s.claimStatus(fa) {
+		t.Fatal("released status still refused")
+	}
+	other := &Session{} // every number keeps its own list
+	if !other.claimStatus(fa) {
+		t.Fatal("another number was blocked")
+	}
+	if !isPermanent(errDupStatus) {
+		t.Fatal("duplicate status would be retried by the queue")
 	}
 }

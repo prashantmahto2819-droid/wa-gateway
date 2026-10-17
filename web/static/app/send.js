@@ -1,4 +1,4 @@
-import { api, html, raw, ic, t, getSessions, sessionOptions, toast, parsePhones, debounce, modal, promptBox, fmtPhone, fmtNum, skel, empty, toLocalInput, fromLocalInput, $$ } from '/static/app/core.js';
+import { api, html, raw, ic, t, getSessions, sessionOptions, sessionName, confirmBox, toast, parsePhones, debounce, modal, promptBox, fmtPhone, fmtNum, skel, empty, toLocalInput, fromLocalInput, $$ } from '/static/app/core.js';
 import { createComposer } from '/static/app/composer.js';
 import { waContactsPicker, chatsPicker, SPEEDS } from '/static/app/pickers.js';
 
@@ -143,8 +143,9 @@ export async function render(ctx) {
   // ---------------------------------------------------------------- footer
   function drawFoot() {
     const f = root.querySelector('[data-foot]');
+    const from = sessions.find((x) => x.name === st.session);
     f.innerHTML = st.mode === 'status'
-      ? html`<button class="btn" data-a="schedule-status">${ic('clock', 16)}${t('Schedule')}</button><button class="btn primary lg" data-a="post-status">${ic('story', 16)}${t('Post status now')}</button>`.s
+      ? html`<span class="muted grow" data-from>${t('Posting from')}: <b>${from ? sessionName(from) : st.session}</b>${from?.phone ? ' · ' + fmtPhone(from.phone) : ''}</span><button class="btn" data-a="schedule-status">${ic('clock', 16)}${t('Schedule')}</button><button class="btn primary lg" data-a="post-status">${ic('story', 16)}${t('Post status now')}</button>`.s
       : html`<button class="btn" data-a="save-tpl">${ic('template', 16)}${t('Save as template')}</button><button class="btn" data-a="schedule">${ic('clock', 16)}${t('Schedule')}</button><button class="btn primary lg" data-a="send">${ic('send', 16)}${t('Send now')}</button>`.s;
     root.querySelector('[data-msg-h]').textContent = st.mode === 'status' ? t('Status') : t('Message');
   }
@@ -163,7 +164,7 @@ export async function render(ctx) {
     r.innerHTML = r._list.length ? html`<div class="target-list">${r._list.map((c) => html`<label><span class="grow"><b>${c.name || fmtPhone(c.phone)}</b> <small class="muted">${fmtPhone(c.phone)}</small></span>${c.opted_out ? raw(`<span class="pill bad">${t('opted out')}</span>`) : ''}<button type="button" class="btn sm" data-addc="${c.id}">${ic('plus', 14)}${t('Add')}</button></label>`)}</div>`.s : html`<p class="muted">${t('No contacts match.')}</p>`.s;
   }, 250);
   root.addEventListener('change', (e) => {
-    if (e.target.matches('[data-session]')) { st.session = e.target.value; st.waSel.clear(); st.chatSel.clear(); st.audSel.clear(); drawTo(); }
+    if (e.target.matches('[data-session]')) { st.session = e.target.value; st.waSel.clear(); st.chatSel.clear(); st.audSel.clear(); drawTo(); drawFoot(); }
     if (e.target.name === 'audmode') { st.aud.mode = e.target.value; drawTo(); }
   });
   root.addEventListener('click', async (e) => {
@@ -206,10 +207,22 @@ export async function render(ctx) {
     }
     if (a === 'post-status') {
       const err = comp.validate() || checkStatusAudience(); if (err) return toast(err, 'warn');
+      const from = sessions.find((x) => x.name === st.session);
+      const label = from ? sessionName(from) + (from.phone ? ' (' + fmtPhone(from.phone) + ')' : '') : st.session;
       b.classList.add('busy');
-      const j = await api('POST', `/api/sessions/${encodeURIComponent(st.session)}/status`, statusMessage());
+      const path = `/api/sessions/${encodeURIComponent(st.session)}/status`;
+      let j = await api('POST', path, statusMessage(), { silent: true });
+      if (!j.ok && j.code === 'duplicate_status') {
+        b.classList.remove('busy');
+        if (!(await confirmBox(t('This same status was already posted from {n} in the last 30 minutes. Post it again?', { n: label }), { okText: t('Post again') }))) return;
+        b.classList.add('busy');
+        j = await api('POST', path + '?force=1', statusMessage(), { silent: true });
+      }
       b.classList.remove('busy');
-      if (j.ok) toast(j.message?.recipients ? t('Status posted — shared with {n} people.', { n: fmtNum(j.message.recipients) }) : t('Status posted'));
+      if (!j.ok) return toast(j.error || t('Something went wrong'), 'bad');
+      // Start fresh so the next post (maybe from another number) can't carry this photo or text along.
+      comp.reset();
+      toast(j.message?.recipients ? t('Status posted from {n} — shared with {c} people.', { n: label, c: fmtNum(j.message.recipients) }) : t('Status posted from {n}.', { n: label }), 'ok', 7000);
     }
     if (a === 'schedule-status') {
       const err = comp.validate() || checkStatusAudience(); if (err) return toast(err, 'warn');

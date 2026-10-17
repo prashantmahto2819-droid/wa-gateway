@@ -1050,5 +1050,16 @@ const HI = {
   "About 30–60 seconds between messages.": "हर मैसेज के बीच लगभग 30–60 सेकंड।",
   "About 1–2 minutes between messages. Recommended.": "हर मैसेज के बीच लगभग 1–2 मिनट। सुझाया गया।",
   "About 2–4 minutes between messages. Best for new numbers.": "हर मैसेज के बीच लगभग 2–4 मिनट। नए नंबरों के लिए सबसे अच्छा।",
+  "Add a unique code under every message": "हर मैसेज के नीचे एक अलग code जोड़ें",
+  "Each person gets a different code at the bottom (e.g. Ref: 7KQ3XP), so no two messages are exactly alike. Or put {{ref}} / {{random}} anywhere in the text.": "हर व्यक्ति को नीचे अलग code मिलेगा (जैसे Ref: 7KQ3XP), ताकि कोई दो मैसेज बिल्कुल एक जैसे न हों। चाहें तो {{ref}} / {{random}} text में कहीं भी लिखें।",
+  "Code style": "Code का तरीका",
+  "Letters and digits — Ref: 7KQ3XP": "अक्षर और अंक — Ref: 7KQ3XP",
+  "Number — #482913": "नंबर — #482913",
+  "Text before the code": "Code से पहले का शब्द",
+  "Posting from": "किस नंबर से",
+  "This same status was already posted from {n} in the last 30 minutes. Post it again?": "यही status पिछले 30 मिनट में {n} से लग चुका है। फिर से लगाएँ?",
+  "Post again": "फिर से लगाएँ",
+  "Status posted from {n} — shared with {c} people.": "Status {n} से लग गया — {c} लोगों के साथ share हुआ।",
+  "Status posted from {n}.": "Status {n} से लग गया।",
 };
 /* HINDI_END */

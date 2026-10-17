@@ -418,8 +418,10 @@ func (a *API) postStatus(w http.ResponseWriter, r *http.Request) {
 	req.Poll, req.Menu, req.Location, req.Contact = nil, nil, nil, nil
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
 	defer cancel()
-	res, err := s.send(ctx, &req, sendOpts{direct: true})
-	s.recordDirect(context.Background(), &req, res, err)
+	res, err := s.send(ctx, &req, sendOpts{direct: true, force: r.URL.Query().Get("force") == "1"})
+	if !errors.Is(err, errDupStatus) {
+		s.recordDirect(context.Background(), &req, res, err)
+	}
 	if err != nil {
 		a.fail(w, err)
 		return

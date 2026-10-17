@@ -158,7 +158,7 @@ func (a *API) renderPage(w http.ResponseWriter, r *http.Request, path string, st
 }
 
 const pageCSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
-	"font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+	"font-src https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 
 func setPageHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Security-Policy", pageCSP)

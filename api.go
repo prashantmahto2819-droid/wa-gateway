@@ -260,6 +260,8 @@ func errStatus(err error) (int, string) {
 		return http.StatusTooManyRequests, "limit_reached"
 	case errors.Is(err, errForbidden):
 		return http.StatusForbidden, "forbidden"
+	case errors.Is(err, errDupStatus):
+		return http.StatusConflict, "duplicate_status"
 	case errors.Is(err, context.DeadlineExceeded):
 		return http.StatusGatewayTimeout, "timeout"
 	case isPermanent(err):

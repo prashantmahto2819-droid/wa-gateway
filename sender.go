@@ -43,7 +43,7 @@ func isPermanent(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, errNotOnWA) {
+	if errors.Is(err, errNotOnWA) || errors.Is(err, errDupStatus) {
 		return true
 	}
 	msg := err.Error()
@@ -199,6 +199,7 @@ func (s *Session) verifyNumber(ctx context.Context, cli *whatsmeow.Client, to ty
 type sendOpts struct {
 	direct bool // API call (not queue): enforce DIRECT_GAP and record a row
 	slow   bool // health guard: half the new-contact allowance
+	force  bool // Status: post even if the same one went out in the last 30 minutes
 }
 
 func (s *Session) send(ctx context.Context, req *SendRequest, opts sendOpts) (*SendResult, error) {
@@ -225,6 +226,7 @@ func (s *Session) send(ctx context.Context, req *SendRequest, opts sendOpts) (*S
 	}
 	isStatus := to == types.StatusBroadcastJID
 	statusCount := 0
+	sentOK := false
 	if isStatus {
 		if err := s.m.lic.require(ctx, owner, "status"); err != nil {
 			return nil, err
@@ -235,6 +237,17 @@ func (s *Session) send(ctx context.Context, req *SendRequest, opts sendOpts) (*S
 		}
 		statusCount = len(list)
 		ctx = context.WithValue(ctx, statusAudKey{}, list)
+		if !opts.force {
+			fp := statusFingerprint(req)
+			if !s.claimStatus(fp) {
+				return &SendResult{To: to.String()}, errDupStatus
+			}
+			defer func() {
+				if !sentOK {
+					s.releaseStatus(fp) // a failed post may be tried again at once
+				}
+			}()
+		}
 	}
 	r := s.row(ctx)
 	if err := s.checkLimits(ctx, r, newContact, opts.slow); err != nil {
@@ -248,6 +261,14 @@ func (s *Session) send(ctx context.Context, req *SendRequest, opts sendOpts) (*S
 
 	s.rndMu.Lock()
 	text := renderText(req.Text, req.Vars, s.rnd)
+	switch req.kind() {
+	case "poll", "location", "contact":
+		// no text body to put a code under
+	default:
+		if !isStatus {
+			text = withUniqueCode(text, req.UniqueCode, req.UniquePrefix, s.rnd)
+		}
+	}
 	s.rndMu.Unlock()
 
 	// Upload media before taking the send lock so a slow download
@@ -359,6 +380,15 @@ func (s *Session) send(ctx context.Context, req *SendRequest, opts sendOpts) (*S
 		return res, err
 	}
 	res.ID, res.Timestamp = resp.ID, resp.Timestamp.Unix()
+	sentOK = true
+	if isStatus {
+		phone := ""
+		if cli.Store.ID != nil {
+			phone = cli.Store.ID.User
+		}
+		s.m.log.Info("status posted", "session", s.name, "from", phone, "id", resp.ID, "recipients", statusCount,
+			"kind", req.kind(), "text", truncate(text, 40))
+	}
 	bumpStat(ctx, s.m.db, s.name, owner, "sent")
 	s.afterSend(ctx, to, req, resp.ID)
 	return res, nil
@@ -647,7 +677,9 @@ func (s *Session) queueStep(ctx context.Context, batch *int) time.Duration {
 		_, _ = s.m.db.ExecContext(bctx, `UPDATE gw_outbox SET not_before=? WHERE session=? AND status='queued' AND not_before<?`, now.Add(time.Hour).Unix(), s.name, now.Add(time.Hour).Unix())
 		s.hook("session.status", map[string]any{"status": s.statusNow(), "error": "queue on hold: " + err.Error()})
 		return time.Hour
-	case isPermanent(err) || attempts+1 >= 3:
+	case isPermanent(err) || attempts+1 >= 3 || toAddr == types.StatusBroadcastJID.String():
+		// A Status is never re-sent automatically: part of a failed post may
+		// already be on people's phones, and a retry would post it twice.
 		s.finish(bctx, id, campaign, "failed", err.Error(), res)
 	default:
 		_, _ = s.m.db.ExecContext(bctx, `UPDATE gw_outbox SET status='queued', not_before=?, error=? WHERE id=?`,
