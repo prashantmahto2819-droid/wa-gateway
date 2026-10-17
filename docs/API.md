@@ -48,6 +48,11 @@ Message   { // used by send, templates, campaigns, auto-replies (exactly one mai
             "location":{"lat":21.1,"lng":81.6,"name":"","address":""},
             "contact":{"name":"Asha","phone":"9198…"},
             "menu":{"title":"Choose","footer":"Reply with a number","options":[{"id":"price","text":"Price list"}]},
+            "buttons":{"title":"Diwali offer","footer":"Valid till Friday","buttons":[{"type":"reply","id":"yes","text":"Interested"},{"type":"reply","id":"no","text":"Not now"}]},
+            //   button types: reply {id,text} | url {text,url} | call {text,phone} | copy {text,code}; max 3; reply and url/call/copy can't be mixed;
+            //   buttons may be combined with "media" (image/video/document header). If WhatsApp refuses buttons (405) the gateway sends a numbered text menu instead → response has fallback:true
+            "list":{"title":"Menu","button_text":"Choose","footer":"","sections":[{"title":"Food","rows":[{"id":"thali","title":"Thali","description":"₹120"}]}]},  // max 10 rows total, needs "text"
+            "preview":true,  // text messages: fetch title/description/image of the first link and attach a preview card (default true)
             "mentions":["9198…"], "mention_all":false, "reply_to":{"id":"","sender":"","text":""}, "vars":{}, "typing":true }
 Contact   { "id":1, "phone":"919876543210", "name":"", "email":"", "tags":["vip"], "notes":"", "custom":{"city":"Korba"},
             "opted_out":false, "source":"manual|import|whatsapp|group", "created_at":0, "updated_at":0, "last_seen":0 }
@@ -114,6 +119,7 @@ Users see only their own sessions. `name` is generated for users (`u<id>-<slug>`
 
 `to` may be a phone, `…@s.whatsapp.net`, group `…@g.us`, channel `…@newsletter`, or `contact:<id>`.
 `menu` is sent as a numbered list ("1. Price list…"); when the person replies with the number, the `message` webhook includes `menu_choice:{id,text}` and `menu`-trigger auto-replies fire.
+`buttons` and `list` are real interactive messages (native flow / list). A tap arrives as a `message` webhook with `type:"button_reply"|"list_reply"`, `button_id` and `menu_choice:{id,text}`, so the same `menu`-trigger auto-replies work for menus, buttons and lists. Not available for channels or Status.
 
 ## Groups, communities, channels
 

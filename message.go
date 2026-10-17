@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"go.mau.fi/whatsmeow"
+	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 	"google.golang.org/protobuf/proto"
@@ -38,7 +39,10 @@ type SendRequest struct {
 	Location   *LocationReq `json:"location,omitempty"`
 	Contact    *ContactReq  `json:"contact,omitempty"`
 	Menu       *MenuReq     `json:"menu,omitempty"`
+	Buttons    *ButtonsReq  `json:"buttons,omitempty"`     // up to 3 reply OR url/call/copy buttons (interactive)
+	List       *ListReq     `json:"list,omitempty"`        // tap-to-open list menu (interactive)
 	MentionAll bool         `json:"mention_all,omitempty"` // groups: notify every member
+	Preview    *bool        `json:"preview,omitempty"`     // link preview card for the first link (default on)
 	Background string       `json:"background,omitempty"`  // text Status background colour (#RRGGBB)
 }
 
@@ -75,6 +79,8 @@ type MenuOpt struct {
 // kind is the main content type of the message.
 func (r *SendRequest) kind() string {
 	switch {
+	case r.Buttons != nil:
+		return "buttons"
 	case r.Media != nil:
 		return "media"
 	case r.Poll != nil:
@@ -85,6 +91,8 @@ func (r *SendRequest) kind() string {
 		return "contact"
 	case r.Menu != nil:
 		return "menu"
+	case r.List != nil:
+		return "list"
 	}
 	return "text"
 }
@@ -116,15 +124,34 @@ func (r *SendRequest) validate() error {
 // validateContent checks the message itself (used without "to" by templates/campaigns).
 func (r *SendRequest) validateContent() error {
 	kinds := 0
-	for _, set := range []bool{r.Media != nil, r.Poll != nil, r.Location != nil, r.Contact != nil, r.Menu != nil} {
+	for _, set := range []bool{r.Poll != nil, r.Location != nil, r.Contact != nil, r.Menu != nil, r.Buttons != nil, r.List != nil} {
 		if set {
 			kinds++
 		}
 	}
 	if kinds > 1 {
-		return errors.New("send only one of media, poll, location, contact or menu per message")
+		return errors.New("send only one of poll, location, contact, menu, buttons or list per message")
 	}
-	if kinds == 0 && strings.TrimSpace(r.Text) == "" {
+	if r.Media != nil && kinds > 0 && r.Buttons == nil {
+		return errors.New("media can only be combined with buttons")
+	}
+	if r.Buttons != nil {
+		if err := r.Buttons.validate(); err != nil {
+			return err
+		}
+		if r.Media != nil && r.Media.Type != "image" && r.Media.Type != "video" && r.Media.Type != "document" {
+			return errors.New("buttons can have an image, video or document header")
+		}
+	}
+	if r.List != nil {
+		if err := r.List.validate(); err != nil {
+			return err
+		}
+		if strings.TrimSpace(r.Text) == "" {
+			return errors.New("a list needs 'text' (the message body)")
+		}
+	}
+	if kinds == 0 && r.Media == nil && strings.TrimSpace(r.Text) == "" {
 		return errors.New("'text' is required")
 	}
 	if len(r.Text) > 60000 {
@@ -309,14 +336,7 @@ func fetchURL(ctx context.Context, raw string, maxBytes int64, allowPrivate bool
 	}
 	dialer := &net.Dialer{Timeout: 15 * time.Second}
 	if !allowPrivate {
-		// Refuse to fetch from the server's own network (protects the VPS).
-		dialer.Control = func(_, address string, _ syscall.RawConn) error {
-			host, _, _ := net.SplitHostPort(address)
-			if !publicIP(net.ParseIP(host)) {
-				return errors.New("this address is not allowed (private or internal network)")
-			}
-			return nil
-		}
+		dialer = guardedDialer()
 	}
 	client := &http.Client{
 		Timeout:   90 * time.Second,
@@ -435,6 +455,13 @@ func buildMessage(ctx context.Context, cli *whatsmeow.Client, to types.JID, req 
 		return &waE2E.Message{ContactMessage: &waE2E.ContactMessage{DisplayName: proto.String(name), Vcard: proto.String(vcard), ContextInfo: ci}}, "", nil
 	case "menu":
 		text = renderMenu(req.Menu, text)
+	case "list":
+		return buildList(req.List, text, ci), "", nil
+	case "buttons":
+		if req.Media == nil {
+			msg, nodes := buildButtons(req.Buttons, text, nil, ci)
+			return msg, "", &withNodes{nodes: nodes}
+		}
 	}
 	if req.Media == nil {
 		if to == types.StatusBroadcastJID {
@@ -442,10 +469,16 @@ func buildMessage(ctx context.Context, cli *whatsmeow.Client, to types.JID, req 
 				BackgroundArgb: proto.Uint32(argb(req.Background)), TextArgb: proto.Uint32(0xFFFFFFFF),
 				Font: waE2E.ExtendedTextMessage_SYSTEM.Enum()}}, "", nil
 		}
+		var msg *waE2E.Message
 		if ci == nil {
-			return &waE2E.Message{Conversation: proto.String(text)}, "", nil
+			msg = &waE2E.Message{Conversation: proto.String(text)}
+		} else {
+			msg = &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String(text), ContextInfo: ci}}
 		}
-		return &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String(text), ContextInfo: ci}}, "", nil
+		if req.Preview == nil || *req.Preview {
+			applyLinkPreview(ctx, msg, text, cfg.AllowPrivateURLs)
+		}
+		return msg, "", nil
 	}
 
 	data, mimetype, filename, err := loadMedia(ctx, req.Media, cfg.MaxMediaBytes, cfg.AllowPrivateURLs)
@@ -479,6 +512,25 @@ func buildMessage(ctx context.Context, cli *whatsmeow.Client, to types.JID, req 
 		caption = proto.String(text)
 	}
 	msg := &waE2E.Message{}
+	if req.Buttons != nil { // media header + buttons
+		h := &waE2E.InteractiveMessage_Header{HasMediaAttachment: proto.Bool(true)}
+		switch req.Media.Type {
+		case "image":
+			h.Media = &waE2E.InteractiveMessage_Header_ImageMessage{ImageMessage: &waE2E.ImageMessage{Mimetype: proto.String(mimetype), URL: url, DirectPath: dp,
+				MediaKey: mediaKey, FileEncSHA256: encSHA, FileSHA256: up.FileSHA256, FileLength: length}}
+		case "video":
+			h.Media = &waE2E.InteractiveMessage_Header_VideoMessage{VideoMessage: &waE2E.VideoMessage{Mimetype: proto.String(mimetype), URL: url, DirectPath: dp,
+				MediaKey: mediaKey, FileEncSHA256: encSHA, FileSHA256: up.FileSHA256, FileLength: length}}
+		default:
+			if filename == "" {
+				filename = "file"
+			}
+			h.Media = &waE2E.InteractiveMessage_Header_DocumentMessage{DocumentMessage: &waE2E.DocumentMessage{Mimetype: proto.String(mimetype), URL: url, DirectPath: dp,
+				MediaKey: mediaKey, FileEncSHA256: encSHA, FileSHA256: up.FileSHA256, FileLength: length, FileName: proto.String(filename)}}
+		}
+		m2, nodes := buildButtons(req.Buttons, text, h, ci)
+		return m2, up.Handle, &withNodes{nodes: nodes}
+	}
 	switch req.Media.Type {
 	case "image":
 		msg.ImageMessage = &waE2E.ImageMessage{Caption: caption, Mimetype: proto.String(mimetype), URL: url, DirectPath: dp,
@@ -562,4 +614,22 @@ func argb(hex string) uint32 {
 		return 0xFF000000 | uint32(v)
 	}
 	return 0xFF0B4F4A
+}
+
+// withNodes is returned (as a non-failing "error") by buildMessage when the
+// message needs extra binary nodes; the sender unwraps it.
+type withNodes struct{ nodes []waBinary.Node }
+
+func (w *withNodes) Error() string { return "extra nodes" }
+
+// guardedDialer refuses connections to the server's own network (protects the VPS),
+// checking the IP actually dialled so redirects and DNS tricks can't get around it.
+func guardedDialer() *net.Dialer {
+	return &net.Dialer{Timeout: 15 * time.Second, Control: func(_, address string, _ syscall.RawConn) error {
+		host, _, _ := net.SplitHostPort(address)
+		if !publicIP(net.ParseIP(host)) {
+			return errors.New("this address is not allowed (private or internal network)")
+		}
+		return nil
+	}}
 }

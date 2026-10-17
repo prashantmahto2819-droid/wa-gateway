@@ -5,6 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	waBinary "go.mau.fi/whatsmeow/binary"
+	"go.mau.fi/whatsmeow/proto/waE2E"
+	"google.golang.org/protobuf/proto"
+	"image"
+	"image/color"
+	pngenc "image/png"
 	"io"
 	"log/slog"
 	"mime/multipart"
@@ -558,5 +564,155 @@ func TestAutoReplyMatching(t *testing.T) {
 	if renderMenu(&MenuReq{Title: "Help", Options: []MenuOpt{{ID: "a", Text: "Price"}, {ID: "b", Text: "Timing"}}}, "") !=
 		"*Help*\n\n1. Price\n2. Timing\n\n_Reply with the number of your choice._" {
 		t.Error("menu text")
+	}
+}
+
+func TestButtonsAndLists(t *testing.T) {
+	b := &ButtonsReq{Title: "Offer", Footer: "Vivid", Buttons: []ButtonReq{{Text: "Yes"}, {Text: "No", ID: "no"}}}
+	if err := b.validate(); err != nil {
+		t.Fatal(err)
+	}
+	if b.Buttons[0].ID != "btn_1" || b.Buttons[0].Type != "reply" {
+		t.Fatalf("defaults: %+v", b.Buttons[0])
+	}
+	msg, nodes := buildButtons(b, "Interested?", nil, nil)
+	nf := msg.GetInteractiveMessage().GetNativeFlowMessage()
+	if len(nf.GetButtons()) != 2 || nf.GetButtons()[0].GetName() != "quick_reply" || !strings.Contains(nf.GetButtons()[1].GetButtonParamsJSON(), `"id":"no"`) {
+		t.Fatalf("native flow: %v", nf)
+	}
+	if msg.GetInteractiveMessage().GetHeader().GetTitle() != "Offer" || msg.GetInteractiveMessage().GetFooter().GetText() != "Vivid" || msg.ViewOnceMessage != nil {
+		t.Fatal("header/footer/wrapper wrong")
+	}
+	if len(nodes) != 1 || nodes[0].Tag != "biz" || nodes[0].Content.([]waBinary.Node)[0].Attrs["type"] != "native_flow" ||
+		nodes[0].Content.([]waBinary.Node)[0].Content.([]waBinary.Node)[0].Attrs["name"] != "mixed" {
+		t.Fatalf("biz node: %+v", nodes)
+	}
+	// mixing reply + cta is refused; cta kinds are built right
+	bad := &ButtonsReq{Buttons: []ButtonReq{{Text: "Yes"}, {Type: "url", Text: "Open", URL: "https://x.in"}}}
+	if bad.validate() == nil {
+		t.Fatal("mixed buttons accepted")
+	}
+	cta := &ButtonsReq{Buttons: []ButtonReq{{Type: "url", Text: "Site", URL: "https://x.in/p"}, {Type: "call", Text: "Call", Phone: "98765 43210"}, {Type: "copy", Text: "Code", Code: "VR50"}}}
+	if err := cta.validate(); err != nil {
+		t.Fatal(err)
+	}
+	m2, _ := buildButtons(cta, "hi", nil, nil)
+	names := []string{}
+	for _, x := range m2.GetInteractiveMessage().GetNativeFlowMessage().GetButtons() {
+		names = append(names, x.GetName())
+	}
+	if strings.Join(names, ",") != "cta_url,cta_call,cta_copy" {
+		t.Fatal(names)
+	}
+	if !strings.Contains(cta.fallbackText("hi"), "Call: +9876543210") {
+		t.Fatal(cta.fallbackText("hi"))
+	}
+	if fb := b.fallbackText("Interested?"); !strings.Contains(fb, "1. Yes") || !strings.Contains(fb, "2. No") {
+		t.Fatal(fb)
+	}
+	if len(b.menuOptions()) != 2 || len(cta.menuOptions()) != 0 {
+		t.Fatal("menu options")
+	}
+
+	l := &ListReq{Title: "Menu", Sections: []ListSection{{Title: "Food", Rows: []ListRow{{Title: "Thali", Description: "₹120"}, {Title: "Dosa"}}}}}
+	if err := l.validate(); err != nil {
+		t.Fatal(err)
+	}
+	lm := buildList(l, "What would you like?", nil).GetListMessage()
+	if lm.GetListType() != waE2E.ListMessage_SINGLE_SELECT || lm.GetButtonText() != "Choose" || len(lm.GetSections()[0].GetRows()) != 2 || lm.GetSections()[0].GetRows()[0].GetRowID() != "row_1_1" {
+		t.Fatalf("list: %v", lm)
+	}
+	big := &ListReq{Sections: []ListSection{{Rows: make([]ListRow, 11)}}}
+	for i := range big.Sections[0].Rows {
+		big.Sections[0].Rows[i].Title = "x"
+	}
+	if big.validate() == nil {
+		t.Fatal("11 rows accepted")
+	}
+
+	// incoming taps
+	id, text, ok := extractInteractiveReply(&waE2E.Message{InteractiveResponseMessage: &waE2E.InteractiveResponseMessage{
+		Body: &waE2E.InteractiveResponseMessage_Body{Text: proto.String("Yes")},
+		InteractiveResponseMessage: &waE2E.InteractiveResponseMessage_NativeFlowResponseMessage_{NativeFlowResponseMessage: &waE2E.InteractiveResponseMessage_NativeFlowResponseMessage{
+			Name: proto.String("quick_reply"), ParamsJSON: proto.String(`{"id":"yes"}`)}}}})
+	if !ok || id != "yes" || text != "Yes" {
+		t.Fatal(id, text, ok)
+	}
+	c := extractContent(&waE2E.Message{ListResponseMessage: &waE2E.ListResponseMessage{Title: proto.String("Thali"),
+		SingleSelectReply: &waE2E.ListResponseMessage_SingleSelectReply{SelectedRowID: proto.String("row_1_1")}}})
+	if c["type"] != "list_reply" || c["button_id"] != "row_1_1" {
+		t.Fatal(c)
+	}
+
+	// request validation through SendRequest
+	r := SendRequest{To: "1", Text: "Pick", Buttons: b, Poll: &PollReq{Name: "q", Options: []string{"a", "b"}}}
+	if r.validate() == nil {
+		t.Fatal("buttons + poll accepted")
+	}
+	r = SendRequest{To: "1", Text: "Pick", Buttons: b, Media: &Media{Type: "image", URL: "https://x/a.jpg"}}
+	if err := r.validate(); err != nil || r.kind() != "buttons" {
+		t.Fatal(err)
+	}
+	r = SendRequest{To: "1", List: l}
+	if r.validate() == nil {
+		t.Fatal("list without text accepted")
+	}
+}
+
+func TestLinkPreview(t *testing.T) {
+	// A tiny site with Open Graph tags and a PNG image.
+	var png bytes.Buffer
+	img := image.NewRGBA(image.Rect(0, 0, 640, 320))
+	for y := 0; y < 320; y++ {
+		for x := 0; x < 640; x++ {
+			img.Set(x, y, color.RGBA{uint8(x / 3), 120, uint8(y), 255})
+		}
+	}
+	_ = pngenc.Encode(&png, img)
+	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/offer":
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(`<html><head><title>Fallback title</title>
+				<meta property="og:title" content="Diwali Mega Offer">
+				<meta property="og:description" content="20% off till Friday">
+				<meta property="og:image" content="/img/offer.png"></head><body>hi</body></html>`))
+		case "/img/offer.png":
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write(png.Bytes())
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer site.Close()
+
+	if l := firstLink("Dekho: " + site.URL + "/offer, aaj hi!"); l != site.URL+"/offer" {
+		t.Fatalf("firstLink %q", l)
+	}
+	if firstLink("no link here") != "" {
+		t.Fatal("found a link in plain text")
+	}
+	p := linkPreview(context.Background(), site.URL+"/offer", true)
+	if p == nil || p.Title != "Diwali Mega Offer" || p.Description != "20% off till Friday" || p.Thumb == nil {
+		t.Fatalf("preview: %+v", p)
+	}
+	th, _, err := image.Decode(bytes.NewReader(p.Thumb))
+	if err != nil || th.Bounds().Dx() != 300 || th.Bounds().Dy() != 150 || len(p.Thumb) > 60000 {
+		t.Fatalf("thumbnail: %v %v %d", err, th.Bounds(), len(p.Thumb))
+	}
+	// Cached: a second call doesn't need the server.
+	site.Close()
+	if linkPreview(context.Background(), site.URL+"/offer", true) == nil {
+		t.Fatal("cache miss")
+	}
+	msg := &waE2E.Message{Conversation: proto.String("Dekho " + site.URL + "/offer")}
+	applyLinkPreview(context.Background(), msg, "Dekho "+site.URL+"/offer", true)
+	ext := msg.GetExtendedTextMessage()
+	if msg.Conversation != nil || ext.GetTitle() != "Diwali Mega Offer" || ext.GetMatchedText() != site.URL+"/offer" || ext.GetPreviewType() != waE2E.ExtendedTextMessage_IMAGE {
+		t.Fatalf("applied: %v", ext)
+	}
+	// Private addresses are refused when the guard is on.
+	if linkPreview(context.Background(), "http://127.0.0.1:1/x", false) != nil {
+		t.Fatal("private address fetched")
 	}
 }

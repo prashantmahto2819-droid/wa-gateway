@@ -4,7 +4,9 @@ import { html, raw, ic, icon, t, esc, api, upload, modal, toast, fmtBytes, fmtTi
 const KINDS = [
   ['text', 'text', 'Text'], ['media', 'image', 'Media'], ['poll', 'poll', 'Poll'],
   ['location', 'pin', 'Location'], ['contact', 'contact', 'Contact card'], ['menu', 'list', 'Menu'],
+  ['buttons', 'check', 'Buttons'], ['list', 'list', 'List'],
 ];
+const BTN_TYPES = [['reply', 'Reply'], ['url', 'Link'], ['call', 'Call'], ['copy', 'Copy code']];
 const BASE_VARS = ['name', 'phone', 'first_name'];
 const SAMPLE = { name: 'Asha Verma', first_name: 'Asha', phone: '+91 98765 43210', city: 'Korba' };
 
@@ -14,6 +16,8 @@ export function kindOf(m) {
   if (m.location) return 'location';
   if (m.contact) return 'contact';
   if (m.menu) return 'menu';
+  if (m.buttons) return 'buttons';
+  if (m.list) return 'list';
   if (m.media) return 'media';
   return 'text';
 }
@@ -24,6 +28,8 @@ export function summarize(m) {
   if (k === 'location') return '📍 ' + (m.location.name || `${m.location.lat}, ${m.location.lng}`);
   if (k === 'contact') return '👤 ' + (m.contact.name || m.contact.phone || '');
   if (k === 'menu') return '☰ ' + (m.menu.title || '') + ' (' + (m.menu.options || []).length + ')';
+  if (k === 'buttons') return '🔘 ' + (m.text || m.buttons.title || '') + ' (' + (m.buttons.buttons || []).length + ')';
+  if (k === 'list') return '📋 ' + (m.list.title || m.text || '');
   if (k === 'media') return (m.media.type === 'image' ? '🖼 ' : m.media.type === 'video' ? '🎬 ' : m.media.type === 'audio' ? '🎵 ' : '📄 ') + (m.text || m.media.filename || '');
   return m.text || '';
 }
@@ -41,7 +47,10 @@ export function bubbleHTML(m, { vars = {}, story = false, bg = '#0b6e5f' } = {})
     return html`<div class="bubble story" style="background:${bg}">${m.text ? sub(m.text) : t('Your status text')}</div>`;
   }
   let inner = '';
-  if (k === 'text') inner = m.text ? sub(m.text) : html`<span style="opacity:.5">${t('Your message will appear here')}</span>`;
+  if (k === 'text') {
+    const link = m.preview !== false && /https?:\/\/[^\s]+/.exec(m.text || '');
+    inner = html`${link ? html`<div class="b-linkcard"><div class="b-linkimg">${ic('image', 22)}</div><div><b>${t('Link preview')}</b><small>${link[0].replace(/^https?:\/\//, '').split('/')[0]}</small></div></div>` : ''}${m.text ? sub(m.text) : html`<span style="opacity:.5">${t('Your message will appear here')}</span>`}`;
+  }
   else if (k === 'media') {
     const md = m.media || {};
     let block;
@@ -63,6 +72,18 @@ export function bubbleHTML(m, { vars = {}, story = false, bg = '#0b6e5f' } = {})
   } else if (k === 'menu') {
     const mn = m.menu || {}; const opts = (mn.options || []).filter((o) => o.text);
     inner = html`${mn.title ? html`<div><b>${sub(mn.title)}</b></div>` : ''}${opts.map((o, i) => html`<div>${i + 1}. ${o.text}</div>`)}${mn.footer ? html`<div class="b-foot">${mn.footer}</div>` : ''}`;
+  } else if (k === 'buttons') {
+    const bt = m.buttons || {}; const md = m.media;
+    const head = md && md.type === 'image' && (md.url || md.media_id) ? html`<div class="b-media"><img alt="" src="${mediaSrc(md)}"></div>` : (md ? html`<div class="b-media">${ic(md.type === 'video' ? 'video' : md.type === 'image' ? 'image' : 'file', 30)}</div>` : '');
+    const icons = { reply: '', url: '↗ ', call: '📞 ', copy: '⧉ ' };
+    const btns = (bt.buttons || []).filter((b) => (b.text || '').trim());
+    return html`<div class="bubble btns">${head}${bt.title ? html`<div><b>${sub(bt.title)}</b></div>` : ''}${m.text ? sub(m.text) : html`<span style="opacity:.5">${t('Message text')}</span>`}${bt.footer ? html`<div class="b-foot">${bt.footer}</div>` : ''}${ts}</div>
+      <div class="b-buttons">${(btns.length ? btns : [{ text: t('Button') }]).map((b) => html`<div class="b-btn">${icons[b.type || 'reply'] || ''}${b.text}</div>`)}</div>`;
+  } else if (k === 'list') {
+    const l = m.list || {}; const rows = (l.sections || []).flatMap((sec) => sec.rows || []).filter((r) => (r.title || '').trim());
+    return html`<div class="bubble btns">${l.title ? html`<div><b>${sub(l.title)}</b></div>` : ''}${m.text ? sub(m.text) : html`<span style="opacity:.5">${t('Message text')}</span>`}${l.footer ? html`<div class="b-foot">${l.footer}</div>` : ''}${ts}</div>
+      <div class="b-buttons"><div class="b-btn">☰ ${l.button_text || t('Choose')}</div></div>
+      <div class="b-listpreview">${(rows.length ? rows : [{ title: t('Row') }]).slice(0, 10).map((r) => html`<div class="b-row"><span class="r"></span><div><div>${r.title}</div>${r.description ? html`<small>${r.description}</small>` : ''}</div></div>`)}</div>`;
   }
   const mention = m.mention_all ? html`<div class="chat-note">${t('@everyone will be mentioned')}</div>` : '';
   return html`${mention}<div class="bubble">${inner}${ts}</div>`;
@@ -120,8 +141,11 @@ export function createComposer(root, opts = {}) {
     location: opts.message?.location ? { ...opts.message.location } : { lat: '', lng: '', name: '', address: '' },
     contact: opts.message?.contact ? { ...opts.message.contact } : { name: '', phone: '' },
     menu: opts.message?.menu ? { ...opts.message.menu, options: opts.message.menu.options.map((o) => ({ ...o })) } : { title: '', footer: t('Reply with a number'), options: [{ id: '', text: '' }, { id: '', text: '' }] },
+    buttons: opts.message?.buttons ? { ...opts.message.buttons, buttons: opts.message.buttons.buttons.map((b) => ({ ...b })) } : { title: '', footer: '', buttons: [{ type: 'reply', id: '', text: '' }, { type: 'reply', id: '', text: '' }] },
+    list: opts.message?.list ? JSON.parse(JSON.stringify(opts.message.list)) : { title: '', button_text: t('Choose'), footer: '', sections: [{ title: '', rows: [{ id: '', title: '', description: '' }, { id: '', title: '', description: '' }] }] },
     mention_all: !!opts.message?.mention_all,
     typing: opts.message?.typing !== false,
+    preview: opts.message?.preview !== false,
     vars: [...new Set([...BASE_VARS, ...(opts.customVars || [])])],
     groupMode: !!opts.groupMode,
     story: !!opts.story, bg: '#0b6e5f',
@@ -189,7 +213,46 @@ export function createComposer(root, opts = {}) {
           ${st.menu.options.length < 20 ? html`<div><button type="button" class="btn sm ghost" data-menu-add>${ic('plus', 16)}${t('Add option')}</button></div>` : ''}
           <p class="hint">${t('Use the option id in an auto-reply with trigger "Menu choice" to answer each option.')}</p></div>
         <label class="field"><span>${t('Footer')}</span><input type="text" data-bind="menu.footer" value="${st.menu.footer}"></label>`;
-      default: return textArea(t('Message'), 6);
+      case 'buttons': {
+        const bt = st.buttons; const kindsUsed = new Set(bt.buttons.map((b) => (b.type === 'reply' ? 'reply' : 'cta')));
+        return html`${textArea(t('Message text'), 4)}
+        <div class="form-grid">
+          <label class="field"><span>${t('Title (bold header, optional)')}</span><input type="text" data-bind="buttons.title" value="${bt.title}" placeholder="${t('Diwali offer')}"></label>
+          <label class="field"><span>${t('Footer (small, optional)')}</span><input type="text" data-bind="buttons.footer" value="${bt.footer}" placeholder="${t('Offer valid till Friday')}"></label></div>
+        <div class="field"><span class="field-label">${t('Buttons')} <small>(${bt.buttons.length}/3)</small></span>
+          <div class="opt-rows">${bt.buttons.map((b, i) => html`<div class="opt-row btn-row">
+            <select data-btn-type="${i}" aria-label="${t('Button type')}">${BTN_TYPES.map(([v, l]) => html`<option value="${v}" ${b.type === v ? 'selected' : ''}>${t(l)}</option>`)}</select>
+            <input type="text" data-btn-text="${i}" value="${b.text}" maxlength="25" placeholder="${t('Button text')}" aria-label="${t('Button text')} ${i + 1}">
+            ${b.type === 'url' ? html`<input type="url" data-btn-val="${i}" value="${b.url || ''}" placeholder="https://…" aria-label="URL">`
+            : b.type === 'call' ? html`<input type="tel" data-btn-val="${i}" value="${b.phone || ''}" placeholder="919876543210" aria-label="${t('Phone')}">`
+            : b.type === 'copy' ? html`<input type="text" data-btn-val="${i}" value="${b.code || ''}" placeholder="${t('Code to copy')}" aria-label="${t('Code')}">`
+            : html`<input type="text" data-btn-val="${i}" value="${b.id || ''}" placeholder="id" aria-label="${t('Button id')}">`}
+            <button type="button" class="btn-icon danger" data-btn-rm="${i}" aria-label="${t('Remove button')} ${i + 1}" ${bt.buttons.length <= 1 ? 'disabled' : ''}>${ic('x', 16)}</button></div>`)}</div>
+          ${bt.buttons.length < 3 ? html`<div><button type="button" class="btn sm ghost" data-btn-add>${ic('plus', 16)}${t('Add button')}</button></div>` : ''}
+          ${kindsUsed.size > 1 ? html`<p class="hint warn">${t('Reply buttons can\'t be mixed with link/call/copy buttons in one message.')}</p>` : ''}
+          <p class="hint">${t('Reply buttons come back as a tap with their id (use trigger "Menu choice" in auto-replies). Optional photo/video/document header below. If WhatsApp refuses buttons for a number, the same message is sent as a numbered text menu automatically.')}</p></div>
+        <details class="field"><summary>${t('Header media (optional)')}</summary>${mediaBlock()}</details>`;
+      }
+      case 'list': {
+        const l = st.list;
+        return html`${textArea(t('Message text'), 3)}
+        <div class="form-grid">
+          <label class="field"><span>${t('Title (optional)')}</span><input type="text" data-bind="list.title" value="${l.title}"></label>
+          <label class="field"><span>${t('Button text')}</span><input type="text" data-bind="list.button_text" value="${l.button_text}" maxlength="20"></label>
+          <label class="field"><span>${t('Footer (optional)')}</span><input type="text" data-bind="list.footer" value="${l.footer}"></label></div>
+        ${l.sections.map((sec, si) => html`<div class="field list-sec">
+          <div class="row"><input type="text" data-sec-title="${si}" value="${sec.title}" placeholder="${t('Section title (optional)')}" class="grow" aria-label="${t('Section title')}">
+          ${l.sections.length > 1 ? html`<button type="button" class="btn-icon danger" data-sec-rm="${si}" aria-label="${t('Remove section')}">${ic('x', 16)}</button>` : ''}</div>
+          <div class="opt-rows">${sec.rows.map((r, ri) => html`<div class="opt-row menu">
+            <input type="text" data-row="${si}:${ri}:id" value="${r.id}" placeholder="id" aria-label="${t('Row id')}">
+            <input type="text" data-row="${si}:${ri}:title" value="${r.title}" maxlength="24" placeholder="${t('Row title')}" aria-label="${t('Row title')}">
+            <input type="text" data-row="${si}:${ri}:description" value="${r.description || ''}" placeholder="${t('Description (optional)')}" aria-label="${t('Row description')}">
+            <button type="button" class="btn-icon danger" data-row-rm="${si}:${ri}" aria-label="${t('Remove row')}" ${sec.rows.length <= 1 ? 'disabled' : ''}>${ic('x', 16)}</button></div>`)}</div>
+          <div class="row"><button type="button" class="btn sm ghost" data-row-add="${si}">${ic('plus', 16)}${t('Add row')}</button></div></div>`)}
+        <div class="row"><button type="button" class="btn sm ghost" data-sec-add>${ic('plus', 16)}${t('Add section')}</button><span class="hint">${t('Up to 10 rows in total. The person taps the button and picks a row; the row id comes back like a menu choice.')}</span></div>`;
+      }
+      default: return html`${textArea(t('Message'), 6)}
+        ${toggle('preview', st.preview, t('Show link preview card'), t('If the message has a link, its title, description and image are fetched and shown as a card (like sending from the phone).'))}`;
     }
   }
 
@@ -231,7 +294,12 @@ export function createComposer(root, opts = {}) {
     } else if (el.dataset.pollOpt != null) st.poll.options[+el.dataset.pollOpt] = el.value;
     else if (el.dataset.menuId != null) st.menu.options[+el.dataset.menuId].id = el.value.replace(/\s+/g, '_').toLowerCase();
     else if (el.dataset.menuText != null) st.menu.options[+el.dataset.menuText].text = el.value;
+    else if (el.dataset.btnText != null) st.buttons.buttons[+el.dataset.btnText].text = el.value;
+    else if (el.dataset.btnVal != null) { const b = st.buttons.buttons[+el.dataset.btnVal]; const v = el.value; if (b.type === 'url') b.url = v; else if (b.type === 'call') b.phone = v; else if (b.type === 'copy') b.code = v; else b.id = v.replace(/\s+/g, '_').toLowerCase(); }
+    else if (el.dataset.secTitle != null) st.list.sections[+el.dataset.secTitle].title = el.value;
+    else if (el.dataset.row != null) { const [si, ri, f] = el.dataset.row.split(':'); st.list.sections[+si].rows[+ri][f] = f === 'id' ? el.value.replace(/\s+/g, '_').toLowerCase() : el.value; }
     else if (el.name === 'mention_all') st.mention_all = el.checked;
+    else if (el.name === 'preview') st.preview = el.checked;
     else if (el.name === 'poll.multiple') st.poll.multiple = el.checked;
     else return;
     updatePreview();
@@ -239,7 +307,9 @@ export function createComposer(root, opts = {}) {
   root.addEventListener('change', async (e) => {
     const el = e.target;
     if (el.name === 'mention_all') { st.mention_all = el.checked; updatePreview(); }
+    if (el.name === 'preview') { st.preview = el.checked; updatePreview(); }
     if (el.name === 'poll.multiple') { st.poll.multiple = el.checked; updatePreview(); }
+    if (el.dataset.btnType != null) { const b = st.buttons.buttons[+el.dataset.btnType]; b.type = el.value; redrawBody(); return; }
     if (el.matches('[data-media-url]') && el.value.trim()) { st.media.url = el.value.trim(); delete st.media.media_id; redrawBody(); }
     if (el.matches('[data-media-file]') && el.files[0]) {
       const f = el.files[0];
@@ -277,6 +347,12 @@ export function createComposer(root, opts = {}) {
     if (b.dataset.pollRm != null) { st.poll.options.splice(+b.dataset.pollRm, 1); redrawBody(); return; }
     if (b.hasAttribute('data-menu-add')) { st.menu.options.push({ id: '', text: '' }); redrawBody(); focusLast('[data-menu-text]'); return; }
     if (b.dataset.menuRm != null) { st.menu.options.splice(+b.dataset.menuRm, 1); redrawBody(); return; }
+    if (b.hasAttribute('data-btn-add')) { const first = st.buttons.buttons[0]; st.buttons.buttons.push({ type: first && first.type !== 'reply' ? 'url' : 'reply', id: '', text: '' }); redrawBody(); focusLast('[data-btn-text]'); return; }
+    if (b.dataset.btnRm != null) { st.buttons.buttons.splice(+b.dataset.btnRm, 1); redrawBody(); return; }
+    if (b.hasAttribute('data-sec-add')) { st.list.sections.push({ title: '', rows: [{ id: '', title: '', description: '' }] }); redrawBody(); return; }
+    if (b.dataset.secRm != null) { st.list.sections.splice(+b.dataset.secRm, 1); redrawBody(); return; }
+    if (b.dataset.rowAdd != null) { st.list.sections[+b.dataset.rowAdd].rows.push({ id: '', title: '', description: '' }); redrawBody(); return; }
+    if (b.dataset.rowRm != null) { const [si, ri] = b.dataset.rowRm.split(':'); st.list.sections[+si].rows.splice(+ri, 1); redrawBody(); return; }
     if (b.dataset.mtype) { st.media.type = b.dataset.mtype; redrawBody(); return; }
     if (b.hasAttribute('data-media-clear')) { st.media = { type: st.media.type || 'image', url: '' }; st.mediaName = ''; redrawBody(); return; }
     if (b.hasAttribute('data-media-lib')) {
@@ -314,9 +390,25 @@ export function createComposer(root, opts = {}) {
       case 'location': m.location = { lat: Number(st.location.lat), lng: Number(st.location.lng), name: st.location.name, address: st.location.address }; break;
       case 'contact': m.contact = { name: st.contact.name, phone: String(st.contact.phone).replace(/[^\d]/g, '') }; break;
       case 'menu': m.menu = { title: st.menu.title, footer: st.menu.footer, options: st.menu.options.filter((o) => o.text.trim()).map((o, i) => ({ id: o.id || String(i + 1), text: o.text.trim() })) }; break;
+      case 'buttons': {
+        m.text = st.text;
+        m.buttons = { title: st.buttons.title, footer: st.buttons.footer, buttons: st.buttons.buttons.filter((b) => forPreview || (b.text || '').trim()).map((b, i) => {
+          const o = { type: b.type || 'reply', text: (b.text || '').trim() };
+          if (o.type === 'reply') o.id = b.id || `btn_${i + 1}`; if (o.type === 'url') o.url = b.url || ''; if (o.type === 'call') o.phone = b.phone || ''; if (o.type === 'copy') o.code = b.code || '';
+          return o; }) };
+        if (st.media.media_id || st.media.url) m.media = cleanMedia(st.media);
+        break;
+      }
+      case 'list': {
+        m.text = st.text;
+        m.list = { title: st.list.title, button_text: st.list.button_text, footer: st.list.footer,
+          sections: st.list.sections.map((sec, si) => ({ title: sec.title, rows: sec.rows.filter((r) => forPreview || (r.title || '').trim()).map((r, ri) => ({ id: r.id || `row_${si + 1}_${ri + 1}`, title: (r.title || '').trim(), description: (r.description || '').trim() || undefined })) })).filter((sec) => forPreview || sec.rows.length) };
+        break;
+      }
     }
     if (st.groupMode && st.mention_all) m.mention_all = true;
     m.typing = st.typing;
+    if (st.kind === 'text' && !st.preview) m.preview = false;
     return m;
   }
   function cleanMedia(md) {
@@ -335,6 +427,25 @@ export function createComposer(root, opts = {}) {
       case 'location': if (!isFinite(m.location.lat) || !isFinite(m.location.lng) || st.location.lat === '' || st.location.lng === '') return t('Enter latitude and longitude.'); break;
       case 'contact': if (!m.contact.name || m.contact.phone.length < 7) return t('Add the contact name and phone.'); break;
       case 'menu': if (m.menu.options.length < 1) return t('Add at least one menu option.'); break;
+      case 'buttons': {
+        if (!m.text.trim()) return t('Write the message text.');
+        if (m.buttons.buttons.length < 1) return t('Add at least one button.');
+        const kinds = new Set(m.buttons.buttons.map((b) => (b.type === 'reply' ? 'reply' : 'cta')));
+        if (kinds.size > 1) return t('Reply buttons can\'t be mixed with link/call/copy buttons in one message.');
+        for (const b of m.buttons.buttons) {
+          if (b.type === 'url' && !/^https?:\/\//.test(b.url)) return t('Link buttons need a full https:// address.');
+          if (b.type === 'call' && b.phone.replace(/\D/g, '').length < 8) return t('Call buttons need a phone number.');
+          if (b.type === 'copy' && !b.code.trim()) return t('Copy buttons need a code.');
+        }
+        if (m.media && m.media.type === 'audio') return t('Buttons can have an image, video or document header, not audio.');
+        break;
+      }
+      case 'list': {
+        if (!m.text.trim()) return t('Write the message text.');
+        const rows = m.list.sections.flatMap((s2) => s2.rows);
+        if (rows.length < 1) return t('Add at least one list row.'); if (rows.length > 10) return t('A list can have at most 10 rows.');
+        break;
+      }
     }
     return '';
   }
@@ -346,7 +457,10 @@ export function createComposer(root, opts = {}) {
     if (msg?.location) st.location = { ...msg.location };
     if (msg?.contact) st.contact = { ...msg.contact };
     if (msg?.menu) st.menu = { ...msg.menu, options: msg.menu.options.map((o) => ({ ...o })) };
+    if (msg?.buttons) st.buttons = { ...msg.buttons, buttons: msg.buttons.buttons.map((b) => ({ ...b })) };
+    if (msg?.list) st.list = JSON.parse(JSON.stringify(msg.list));
     st.mention_all = !!msg?.mention_all;
+    st.preview = msg?.preview !== false;
     draw();
   }
   function setGroupMode(on) { if (st.groupMode !== !!on) { st.groupMode = !!on; draw(); } }

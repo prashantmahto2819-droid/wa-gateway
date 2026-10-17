@@ -593,7 +593,11 @@ func (s *Session) onMessage(ctx context.Context, e *events.Message) {
 		if content["type"] == "text" && text != "" {
 			s.handleKeyword(ctx, chatPN, text)
 		}
-		choice = s.menuChoice(ctx, chatPN, text)
+		if id, _ := content["button_id"].(string); id != "" {
+			choice = &MenuOpt{ID: id, Text: text}
+		} else {
+			choice = s.menuChoice(ctx, chatPN, text)
+		}
 		if choice != nil {
 			content["menu_choice"] = choice
 		}
@@ -695,12 +699,12 @@ func extractContent(m *waE2E.Message) map[string]any {
 		out["type"], out["text"], out["vcard"] = "contact", m.ContactMessage.GetDisplayName(), m.ContactMessage.GetVcard()
 	case m.ReactionMessage != nil:
 		out["type"], out["text"], out["quoted_id"] = "reaction", m.ReactionMessage.GetText(), m.ReactionMessage.GetKey().GetID()
-	case m.ButtonsResponseMessage != nil:
-		out["type"], out["text"], out["button_id"] = "button_reply", m.ButtonsResponseMessage.GetSelectedDisplayText(), m.ButtonsResponseMessage.GetSelectedButtonID()
+	case m.InteractiveResponseMessage != nil, m.ButtonsResponseMessage != nil, m.TemplateButtonReplyMessage != nil:
+		id, text, _ := extractInteractiveReply(m)
+		out["type"], out["text"], out["button_id"] = "button_reply", text, id
 	case m.ListResponseMessage != nil:
-		out["type"], out["text"], out["button_id"] = "list_reply", m.ListResponseMessage.GetTitle(), m.ListResponseMessage.GetSingleSelectReply().GetSelectedRowID()
-	case m.TemplateButtonReplyMessage != nil:
-		out["type"], out["text"], out["button_id"] = "button_reply", m.TemplateButtonReplyMessage.GetSelectedDisplayText(), m.TemplateButtonReplyMessage.GetSelectedID()
+		id, text, _ := extractInteractiveReply(m)
+		out["type"], out["text"], out["button_id"] = "list_reply", text, id
 	case m.PollCreationMessage != nil || m.PollCreationMessageV3 != nil:
 		p := m.PollCreationMessage
 		if p == nil {

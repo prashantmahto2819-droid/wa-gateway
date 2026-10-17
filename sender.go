@@ -10,14 +10,18 @@ import (
 	"time"
 
 	"go.mau.fi/whatsmeow"
+	waBinary "go.mau.fi/whatsmeow/binary"
+	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
+	"google.golang.org/protobuf/proto"
 )
 
 type SendResult struct {
 	ID         string `json:"id"` // WhatsApp message id (use it for reply_to / receipts)
 	To         string `json:"to"` // final JID it went to
 	Timestamp  int64  `json:"timestamp"`
-	NewContact bool   `json:"new_contact"` // true if this person never wrote to us before
+	NewContact bool   `json:"new_contact"`        // true if this person never wrote to us before
+	Fallback   bool   `json:"fallback,omitempty"` // interactive message was sent as a numbered text menu instead
 }
 
 // permanent errors are not retried by the queue.
@@ -230,8 +234,16 @@ func (s *Session) send(ctx context.Context, req *SendRequest, opts sendOpts) (*S
 		}
 	}
 	msg, handle, err := buildMessage(ctx, cli, to, req, text, s.m.cfg, mentions)
+	var extraNodes *[]waBinary.Node
+	if wn, ok := err.(*withNodes); ok {
+		extraNodes, err = &wn.nodes, nil
+	}
 	if err != nil {
 		return &SendResult{To: to.String(), NewContact: newContact}, err
+	}
+	interactive := req.Buttons != nil || req.List != nil
+	if interactive && (to.Server == types.NewsletterServer || isStatus) {
+		return &SendResult{To: to.String(), NewContact: newContact}, errors.New("buttons and lists can't be posted to channels or Status; use text or a poll")
 	}
 
 	s.sendMu.Lock()
@@ -245,7 +257,7 @@ func (s *Session) send(ctx context.Context, req *SendRequest, opts sendOpts) (*S
 	}
 
 	isChat := to.Server != types.NewsletterServer && !isStatus
-	typing := s.m.cfg.Typing && req.kind() != "poll"
+	typing := s.m.cfg.Typing && req.kind() != "poll" && req.kind() != "list"
 	if req.Typing != nil {
 		typing = *req.Typing
 	}
@@ -271,9 +283,28 @@ func (s *Session) send(ctx context.Context, req *SendRequest, opts sendOpts) (*S
 		}
 	}
 
-	resp, err := cli.SendMessage(ctx, to, msg, whatsmeow.SendRequestExtra{MediaHandle: handle})
-	s.lastSend = time.Now()
+	resp, err := cli.SendMessage(ctx, to, msg, whatsmeow.SendRequestExtra{MediaHandle: handle, AdditionalNodes: extraNodes})
 	res := &SendResult{To: to.String(), NewContact: newContact}
+	if err != nil && interactive && (serverErrCode(err) == "405" || serverErrCode(err) == "400") {
+		// WhatsApp refused the interactive form for this account: send the same
+		// content as a numbered text menu so automations never get stuck.
+		s.m.log.Warn("interactive message refused, sending text fallback", "session", s.name, "err", err)
+		fb := req.Text
+		if req.Buttons != nil {
+			fb = req.Buttons.fallbackText(text)
+		} else {
+			fb = req.List.fallbackText(text)
+		}
+		plain := &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String(fb)}}
+		if ci := msg.GetListMessage().GetContextInfo(); ci != nil {
+			plain.ExtendedTextMessage.ContextInfo = ci
+		} else if im := msg.GetInteractiveMessage(); im != nil {
+			plain.ExtendedTextMessage.ContextInfo = im.GetContextInfo()
+		}
+		resp, err = cli.SendMessage(ctx, to, plain)
+		res.Fallback = err == nil
+	}
+	s.lastSend = time.Now()
 	if err != nil {
 		bumpStat(ctx, s.m.db, s.name, owner, "failed")
 		switch serverErrCode(err) {
@@ -337,10 +368,19 @@ func (s *Session) prepare(ctx context.Context, owner int64, req *SendRequest) er
 // afterSend remembers menus and polls so replies and votes can be understood.
 func (s *Session) afterSend(ctx context.Context, to types.JID, req *SendRequest, id types.MessageID) {
 	ctx = context.WithoutCancel(ctx)
+	var opts []MenuOpt
 	switch {
-	case req.Menu != nil && to.Server != types.NewsletterServer:
+	case req.Menu != nil:
+		opts = req.Menu.Options
+	case req.Buttons != nil:
+		opts = req.Buttons.menuOptions()
+	case req.List != nil:
+		opts = req.List.menuOptions()
+	}
+	switch {
+	case len(opts) > 0 && to.Server != types.NewsletterServer:
 		_, _ = s.m.db.ExecContext(ctx, `INSERT INTO chat_state(session, chat, menu, menu_at) VALUES(?,?,?,?)
-			ON CONFLICT(session, chat) DO UPDATE SET menu=excluded.menu, menu_at=excluded.menu_at`, s.name, to.String(), jsonText(req.Menu.Options), time.Now().Unix())
+			ON CONFLICT(session, chat) DO UPDATE SET menu=excluded.menu, menu_at=excluded.menu_at`, s.name, to.String(), jsonText(opts), time.Now().Unix())
 	case req.Poll != nil:
 		_, _ = s.m.db.ExecContext(ctx, `INSERT OR REPLACE INTO polls(session, msg_id, chat, name, options, at) VALUES(?,?,?,?,?,?)`,
 			s.name, id, to.String(), req.Poll.Name, jsonText(req.Poll.Options), time.Now().Unix())
