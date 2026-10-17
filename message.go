@@ -41,6 +41,7 @@ type SendRequest struct {
 	Menu       *MenuReq     `json:"menu,omitempty"`
 	Buttons    *ButtonsReq  `json:"buttons,omitempty"`     // up to 3 reply OR url/call/copy buttons (interactive)
 	List       *ListReq     `json:"list,omitempty"`        // tap-to-open list menu (interactive)
+	Carousel   *CarouselReq `json:"carousel,omitempty"`    // horizontal cards with image + buttons (interactive)
 	MentionAll bool         `json:"mention_all,omitempty"` // groups: notify every member
 	Preview    *bool        `json:"preview,omitempty"`     // link preview card for the first link (default on)
 	Background string       `json:"background,omitempty"`  // text Status background colour (#RRGGBB)
@@ -93,6 +94,8 @@ func (r *SendRequest) kind() string {
 		return "menu"
 	case r.List != nil:
 		return "list"
+	case r.Carousel != nil:
+		return "carousel"
 	}
 	return "text"
 }
@@ -124,13 +127,13 @@ func (r *SendRequest) validate() error {
 // validateContent checks the message itself (used without "to" by templates/campaigns).
 func (r *SendRequest) validateContent() error {
 	kinds := 0
-	for _, set := range []bool{r.Poll != nil, r.Location != nil, r.Contact != nil, r.Menu != nil, r.Buttons != nil, r.List != nil} {
+	for _, set := range []bool{r.Poll != nil, r.Location != nil, r.Contact != nil, r.Menu != nil, r.Buttons != nil, r.List != nil, r.Carousel != nil} {
 		if set {
 			kinds++
 		}
 	}
 	if kinds > 1 {
-		return errors.New("send only one of poll, location, contact, menu, buttons or list per message")
+		return errors.New("send only one of poll, location, contact, menu, buttons, list or carousel per message")
 	}
 	if r.Media != nil && kinds > 0 && r.Buttons == nil {
 		return errors.New("media can only be combined with buttons")
@@ -141,6 +144,11 @@ func (r *SendRequest) validateContent() error {
 		}
 		if r.Media != nil && r.Media.Type != "image" && r.Media.Type != "video" && r.Media.Type != "document" {
 			return errors.New("buttons can have an image, video or document header")
+		}
+	}
+	if r.Carousel != nil {
+		if err := r.Carousel.validate(); err != nil {
+			return err
 		}
 	}
 	if r.List != nil {
@@ -457,6 +465,13 @@ func buildMessage(ctx context.Context, cli *whatsmeow.Client, to types.JID, req 
 		text = renderMenu(req.Menu, text)
 	case "list":
 		return buildList(req.List, text, ci), "", nil
+	case "carousel":
+		headers, _, err := uploadCardMedia(ctx, cli, req.Carousel, cfg)
+		if err != nil {
+			return nil, "", err
+		}
+		msg, nodes := buildCarousel(req.Carousel, headers, text, ci)
+		return msg, "", &withNodes{nodes: nodes, headers: headers}
 	case "buttons":
 		if req.Media == nil {
 			msg, nodes := buildButtons(req.Buttons, text, nil, ci)
@@ -618,7 +633,10 @@ func argb(hex string) uint32 {
 
 // withNodes is returned (as a non-failing "error") by buildMessage when the
 // message needs extra binary nodes; the sender unwraps it.
-type withNodes struct{ nodes []waBinary.Node }
+type withNodes struct {
+	nodes   []waBinary.Node
+	headers []*waE2E.InteractiveMessage_Header // carousel: uploaded card media for the fallback
+}
 
 func (w *withNodes) Error() string { return "extra nodes" }
 

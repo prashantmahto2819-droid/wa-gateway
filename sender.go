@@ -235,13 +235,14 @@ func (s *Session) send(ctx context.Context, req *SendRequest, opts sendOpts) (*S
 	}
 	msg, handle, err := buildMessage(ctx, cli, to, req, text, s.m.cfg, mentions)
 	var extraNodes *[]waBinary.Node
+	var cardHeaders []*waE2E.InteractiveMessage_Header
 	if wn, ok := err.(*withNodes); ok {
-		extraNodes, err = &wn.nodes, nil
+		extraNodes, cardHeaders, err = &wn.nodes, wn.headers, nil
 	}
 	if err != nil {
 		return &SendResult{To: to.String(), NewContact: newContact}, err
 	}
-	interactive := req.Buttons != nil || req.List != nil
+	interactive := req.Buttons != nil || req.List != nil || req.Carousel != nil
 	if interactive && (to.Server == types.NewsletterServer || isStatus) {
 		return &SendResult{To: to.String(), NewContact: newContact}, errors.New("buttons and lists can't be posted to channels or Status; use text or a poll")
 	}
@@ -257,7 +258,7 @@ func (s *Session) send(ctx context.Context, req *SendRequest, opts sendOpts) (*S
 	}
 
 	isChat := to.Server != types.NewsletterServer && !isStatus
-	typing := s.m.cfg.Typing && req.kind() != "poll" && req.kind() != "list"
+	typing := s.m.cfg.Typing && req.kind() != "poll" && req.kind() != "list" && req.kind() != "carousel"
 	if req.Typing != nil {
 		typing = *req.Typing
 	}
@@ -289,19 +290,23 @@ func (s *Session) send(ctx context.Context, req *SendRequest, opts sendOpts) (*S
 		// WhatsApp refused the interactive form for this account: send the same
 		// content as a numbered text menu so automations never get stuck.
 		s.m.log.Warn("interactive message refused, sending text fallback", "session", s.name, "err", err)
-		fb := req.Text
-		if req.Buttons != nil {
-			fb = req.Buttons.fallbackText(text)
+		if req.Carousel != nil {
+			resp, err = s.sendCarouselFallback(ctx, cli, to, req.Carousel, cardHeaders, text)
 		} else {
-			fb = req.List.fallbackText(text)
+			fb := req.Text
+			if req.Buttons != nil {
+				fb = req.Buttons.fallbackText(text)
+			} else {
+				fb = req.List.fallbackText(text)
+			}
+			plain := &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String(fb)}}
+			if ci := msg.GetListMessage().GetContextInfo(); ci != nil {
+				plain.ExtendedTextMessage.ContextInfo = ci
+			} else if im := msg.GetInteractiveMessage(); im != nil {
+				plain.ExtendedTextMessage.ContextInfo = im.GetContextInfo()
+			}
+			resp, err = cli.SendMessage(ctx, to, plain)
 		}
-		plain := &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String(fb)}}
-		if ci := msg.GetListMessage().GetContextInfo(); ci != nil {
-			plain.ExtendedTextMessage.ContextInfo = ci
-		} else if im := msg.GetInteractiveMessage(); im != nil {
-			plain.ExtendedTextMessage.ContextInfo = im.GetContextInfo()
-		}
-		resp, err = cli.SendMessage(ctx, to, plain)
 		res.Fallback = err == nil
 	}
 	s.lastSend = time.Now()
@@ -349,17 +354,26 @@ func (s *Session) prepare(ctx context.Context, owner int64, req *SendRequest) er
 		}
 		req.To = phone
 	}
-	if req.Media != nil && req.Media.MediaID > 0 && req.Media.data == nil {
-		data, mime, name, err := s.m.readMedia(ctx, owner, req.Media.MediaID)
+	medias := []*Media{req.Media}
+	if req.Carousel != nil {
+		for i := range req.Carousel.Cards {
+			medias = append(medias, req.Carousel.Cards[i].Media)
+		}
+	}
+	for _, m := range medias {
+		if m == nil || m.MediaID == 0 || m.data != nil {
+			continue
+		}
+		data, mime, name, err := s.m.readMedia(ctx, owner, m.MediaID)
 		if err != nil {
 			return err
 		}
-		req.Media.data = data
-		if req.Media.Mimetype == "" {
-			req.Media.Mimetype = mime
+		m.data = data
+		if m.Mimetype == "" {
+			m.Mimetype = mime
 		}
-		if req.Media.FileName == "" {
-			req.Media.FileName = name
+		if m.FileName == "" {
+			m.FileName = name
 		}
 	}
 	return nil
@@ -376,6 +390,8 @@ func (s *Session) afterSend(ctx context.Context, to types.JID, req *SendRequest,
 		opts = req.Buttons.menuOptions()
 	case req.List != nil:
 		opts = req.List.menuOptions()
+	case req.Carousel != nil:
+		opts = req.Carousel.menuOptions()
 	}
 	switch {
 	case len(opts) > 0 && to.Server != types.NewsletterServer:
