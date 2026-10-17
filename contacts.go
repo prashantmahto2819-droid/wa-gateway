@@ -30,7 +30,7 @@ type Contact struct {
 }
 
 const contactCols = `c.id, c.phone, c.name, c.email, c.tags, c.notes, c.custom, c.source, c.created_at, c.updated_at, c.last_seen,
-	EXISTS(SELECT 1 FROM gw_optouts o WHERE o.phone=c.phone)`
+	EXISTS(SELECT 1 FROM optouts o WHERE o.owner_id=c.owner_id AND o.phone=c.phone)`
 
 func scanContact(row interface{ Scan(...any) error }) (*Contact, error) {
 	var c Contact
@@ -125,9 +125,9 @@ func (a *API) listContacts(w http.ResponseWriter, r *http.Request) {
 	}
 	switch q.Get("opted_out") {
 	case "1", "true":
-		where = append(where, "EXISTS(SELECT 1 FROM gw_optouts o WHERE o.phone=c.phone)")
+		where = append(where, "EXISTS(SELECT 1 FROM optouts o WHERE o.owner_id=c.owner_id AND o.phone=c.phone)")
 	case "0", "false":
-		where = append(where, "NOT EXISTS(SELECT 1 FROM gw_optouts o WHERE o.phone=c.phone)")
+		where = append(where, "NOT EXISTS(SELECT 1 FROM optouts o WHERE o.owner_id=c.owner_id AND o.phone=c.phone)")
 	}
 	w2 := strings.Join(where, " AND ")
 	var total int
@@ -275,9 +275,9 @@ func (a *API) bulkContacts(w http.ResponseWriter, r *http.Request) {
 		case "delete":
 			_, err = tx.ExecContext(ctx, `DELETE FROM contacts WHERE id=?`, id)
 		case "opt_out":
-			_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO gw_optouts(phone, keyword, session, at) VALUES(?, 'manual', ?, ?)`, phone, "user:"+strconv.FormatInt(p.UserID, 10), now)
+			_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO optouts(owner_id, phone, keyword, session, at) VALUES(?, ?, 'manual', '', ?)`, p.UserID, phone, now)
 		case "opt_in":
-			_, err = tx.ExecContext(ctx, `DELETE FROM gw_optouts WHERE phone=?`, phone)
+			_, err = tx.ExecContext(ctx, `DELETE FROM optouts WHERE owner_id=? AND phone=?`, p.UserID, phone)
 		default:
 			writeErr(w, http.StatusBadRequest, "bad_request", errors.New("unknown action"))
 			return

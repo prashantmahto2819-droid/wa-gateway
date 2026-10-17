@@ -189,6 +189,19 @@ func speedFactor(speed string) int {
 	return 1
 }
 
+// firstRun is when a new campaign should first go out: the chosen time, or
+// now for an immediate send; a repeating campaign whose start is in the past
+// waits for its next occurrence instead of firing at once.
+func firstRun(s Schedule, now time.Time) int64 {
+	if s.At > now.Unix() {
+		return s.At
+	}
+	if s.Repeat != "" && s.Repeat != "none" && s.At > 0 {
+		return nextRun(s, now)
+	}
+	return now.Unix()
+}
+
 // nextRun returns the next time after `after` for a repeating schedule (0 = no more runs).
 func nextRun(s Schedule, after time.Time) int64 {
 	if s.Repeat == "" || s.Repeat == "none" {
@@ -355,10 +368,7 @@ func (a *API) createCampaign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now()
-	status, next := "scheduled", c.Schedule.At
-	if next < now.Unix() {
-		next = now.Unix()
-	}
+	status, next := "scheduled", firstRun(c.Schedule, now)
 	if c.Draft {
 		status, next = "draft", 0
 	}
@@ -371,7 +381,11 @@ func (a *API) createCampaign(w http.ResponseWriter, r *http.Request) {
 	}
 	id, _ := res.LastInsertId()
 	a.m.pokeScheduler()
-	saved, _ := scanCampaign(a.m.db.QueryRowContext(r.Context(), `SELECT `+campaignCols+` FROM campaigns WHERE id=?`, id))
+	saved, err := scanCampaign(a.m.db.QueryRowContext(r.Context(), `SELECT `+campaignCols+` FROM campaigns WHERE id=?`, id))
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
 	saved.Stats = a.m.campaignStats(r.Context(), id)
 	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "campaign": saved})
 }
@@ -422,14 +436,18 @@ func (a *API) updateCampaign(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, err)
 		return
 	}
-	status, next := old.Status, c.Schedule.At
-	if next < time.Now().Unix() {
-		next = time.Now().Unix()
+	status, next := old.Status, firstRun(c.Schedule, time.Now())
+	if old.Schedule.Runs > 0 && c.Schedule.Repeat != "none" {
+		next = nextRun(c.Schedule, time.Now()) // already ran once: only future repeats
 	}
 	if c.Draft {
 		status, next = "draft", 0
 	} else if status == "draft" {
 		status = "scheduled"
+	}
+	if status == "scheduled" && next == 0 {
+		writeErr(w, http.StatusBadRequest, "bad_request", errors.New("this schedule has no future run; check the dates"))
+		return
 	}
 	_, err := a.m.db.ExecContext(r.Context(), `UPDATE campaigns SET name=?, status=?, sessions=?, message=?, audience=?, sched_at=?, repeat=?, days=?, until=?, next_run=?, speed=?, updated_at=? WHERE id=?`,
 		c.Name, status, jsonText(c.Sessions), jsonText(c.Message), jsonText(c.Audience), c.Schedule.At, c.Schedule.Repeat, jsonText(orInts(c.Schedule.Days)),
@@ -439,7 +457,11 @@ func (a *API) updateCampaign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.m.pokeScheduler()
-	saved, _ := scanCampaign(a.m.db.QueryRowContext(r.Context(), `SELECT `+campaignCols+` FROM campaigns WHERE id=?`, old.ID))
+	saved, err := scanCampaign(a.m.db.QueryRowContext(r.Context(), `SELECT `+campaignCols+` FROM campaigns WHERE id=?`, old.ID))
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
 	saved.Stats = a.m.campaignStats(r.Context(), old.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "campaign": saved})
 }
@@ -580,7 +602,7 @@ func (m *Manager) enqueue(ctx context.Context, owner int64, pool []string, campa
 		}
 		key := to.String()
 		isPerson := to.Server == types.DefaultUserServer || to.Server == types.HiddenUserServer
-		if isPerson && isOptedOut(ctx, m.db, key) {
+		if isPerson && isOptedOut(ctx, m.db, owner, key) {
 			res.Skipped++
 			continue
 		}

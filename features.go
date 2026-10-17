@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"slices"
@@ -32,6 +33,31 @@ func validateProxy(raw string) (string, error) {
 	case "http", "https", "socks5":
 	default:
 		return "", errors.New("proxy scheme must be http, https or socks5")
+	}
+	return u.String(), nil
+}
+
+// vetProxy resolves the proxy host and, unless private addresses are allowed,
+// refuses internal networks and pins the vetted IP into the URL so the
+// connection can't be redirected later (DNS rebinding).
+func vetProxy(ctx context.Context, raw string, allowPrivate bool) (string, error) {
+	p, err := validateProxy(raw)
+	if err != nil || p == "" || allowPrivate {
+		return p, err
+	}
+	u, _ := url.Parse(p)
+	host := u.Hostname()
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+	if err != nil || len(ips) == 0 {
+		return "", errors.New("proxy host could not be resolved")
+	}
+	for _, ip := range ips {
+		if !publicIP(ip) {
+			return "", errors.New("proxy must be a public server, not an internal address")
+		}
+	}
+	if net.ParseIP(host) == nil && u.Scheme != "https" { // https needs the hostname for TLS
+		u.Host = net.JoinHostPort(ips[0].String(), u.Port())
 	}
 	return u.String(), nil
 }
@@ -207,18 +233,12 @@ func (s *Session) handleKeyword(ctx context.Context, chat types.JID, text string
 	var reply, event string
 	switch {
 	case slices.Contains(cfg.OptoutKeywords, kw):
-		res, err := s.m.db.ExecContext(ctx, `INSERT OR IGNORE INTO gw_optouts(phone, keyword, session, at) VALUES(?,?,?,?)`, phone, kw, s.name, time.Now().Unix())
-		if err != nil {
-			return
-		}
-		if n, _ := res.RowsAffected(); n == 0 {
+		if !addOptout(ctx, s.m.db, s.owner(), phone, kw, s.name) {
 			return // already opted out (e.g. replayed after reconnect): don't reply again
 		}
-		// Cancel anything still waiting for this person.
-		_, _ = s.m.db.ExecContext(ctx, `UPDATE gw_outbox SET status='skipped', error='opted_out' WHERE status='queued' AND to_addr=?`, chat.String())
 		reply, event = cfg.OptoutReply, "contact.optout"
 	case slices.Contains(cfg.OptinKeywords, kw):
-		res, err := s.m.db.ExecContext(ctx, `DELETE FROM gw_optouts WHERE phone=?`, phone)
+		res, err := s.m.db.ExecContext(ctx, `DELETE FROM optouts WHERE owner_id=? AND phone=?`, s.owner(), phone)
 		if err != nil {
 			return
 		}

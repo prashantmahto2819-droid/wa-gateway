@@ -313,7 +313,7 @@ func fetchURL(ctx context.Context, raw string, maxBytes int64, allowPrivate bool
 		dialer.Control = func(_, address string, _ syscall.RawConn) error {
 			host, _, _ := net.SplitHostPort(address)
 			if !publicIP(net.ParseIP(host)) {
-				return fmt.Errorf("blocked address %s", host)
+				return errors.New("this address is not allowed (private or internal network)")
 			}
 			return nil
 		}

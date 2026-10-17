@@ -272,7 +272,7 @@ func (a *API) joinGroup(w http.ResponseWriter, r *http.Request) {
 
 // saveGroupContacts stores every member's phone as a contact with a tag.
 func (a *API) saveGroupContacts(w http.ResponseWriter, r *http.Request) {
-	s, cli, ok := a.client(w, r)
+	s, cli, ok := a.groupsAllowed(w, r)
 	if !ok {
 		return
 	}

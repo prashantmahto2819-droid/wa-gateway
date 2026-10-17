@@ -291,6 +291,12 @@ func (s *Session) send(ctx context.Context, req *SendRequest, opts sendOpts) (*S
 	return res, nil
 }
 
+func (s *Session) statusNow() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.status
+}
+
 // prepare enforces the licence and resolves library media / contact ids.
 func (s *Session) prepare(ctx context.Context, owner int64, req *SendRequest) error {
 	lic := s.m.lic
@@ -401,8 +407,9 @@ func (s *Session) recordDirect(ctx context.Context, req *SendRequest, res *SendR
 	if sendErr != nil {
 		status, errMsg, sentAt = "failed", sendErr.Error(), 0
 	}
-	r, err := s.m.db.ExecContext(ctx, `INSERT INTO gw_outbox(session,to_addr,payload,status,error,wa_id,direct,new_contact,attempts,created_at,sent_at)
-		VALUES(?,?,?,?,?,?,1,?,1,?,?)`, s.name, to, string(payload), status, errMsg, waID, nc, time.Now().Unix(), sentAt)
+	r, err := s.m.db.ExecContext(ctx, `INSERT INTO gw_outbox(session,owner_id,to_addr,payload,status,error,wa_id,direct,new_contact,attempts,created_at,sent_at,finished_at,wa_error)
+		VALUES(?,?,?,?,?,?,?,1,?,1,?,?,?,?)`, s.name, s.owner(), to, string(payload), status, errMsg, waID, nc, time.Now().Unix(), sentAt, time.Now().Unix(),
+		b2i(sendErr != nil && !isPermanent(sendErr)))
 	if err != nil {
 		return 0
 	}
@@ -508,7 +515,7 @@ func (s *Session) queueStep(ctx context.Context, batch *int) time.Duration {
 		return 0
 	}
 	// People who said STOP are skipped; people who got enough campaign messages this week wait.
-	if isOptedOut(ctx, s.m.db, toAddr) {
+	if isOptedOut(ctx, s.m.db, s.owner(), toAddr) {
 		s.finish(context.WithoutCancel(ctx), id, campaign, "skipped", "opted_out", nil)
 		return 0
 	}
@@ -541,6 +548,12 @@ func (s *Session) queueStep(ctx context.Context, batch *int) time.Duration {
 	case errors.Is(err, errDailyLimit), errors.Is(err, errNotConnected), errors.Is(err, context.Canceled):
 		_, _ = s.m.db.ExecContext(bctx, `UPDATE gw_outbox SET status='queued', attempts=attempts-1 WHERE id=?`, id)
 		return time.Minute
+	case errors.Is(err, errLimitReached), errors.Is(err, errLicenceExpired), errors.Is(err, errLicenceRequired), errors.Is(err, errFeatureLocked):
+		// Plan problem, not a WhatsApp problem: hold everything for an hour and tell the owner once.
+		_, _ = s.m.db.ExecContext(bctx, `UPDATE gw_outbox SET status='queued', attempts=attempts-1, error=?, not_before=? WHERE id=?`, err.Error(), now.Add(time.Hour).Unix(), id)
+		_, _ = s.m.db.ExecContext(bctx, `UPDATE gw_outbox SET not_before=? WHERE session=? AND status='queued' AND not_before<?`, now.Add(time.Hour).Unix(), s.name, now.Add(time.Hour).Unix())
+		s.hook("session.status", map[string]any{"status": s.statusNow(), "error": "queue on hold: " + err.Error()})
+		return time.Hour
 	case isPermanent(err) || attempts+1 >= 3:
 		s.finish(bctx, id, campaign, "failed", err.Error(), res)
 	default:

@@ -161,6 +161,12 @@ CREATE TABLE IF NOT EXISTS autoreply_log (
 	at      INTEGER NOT NULL,
 	PRIMARY KEY (rule_id, chat)
 );
+CREATE TABLE IF NOT EXISTS autoreply_burst (
+	owner_id INTEGER NOT NULL,
+	chat     TEXT NOT NULL,
+	at       INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS autoreply_burst_idx ON autoreply_burst(owner_id, chat, at);
 CREATE TABLE IF NOT EXISTS chat_state (
 	session     TEXT NOT NULL,
 	chat        TEXT NOT NULL,
@@ -246,7 +252,18 @@ func migrate2(db *sql.DB) error {
 			return err
 		}
 	}
-	_, err := db.Exec(`CREATE INDEX IF NOT EXISTS gw_outbox_cid ON gw_outbox(campaign_id, status)`)
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS gw_outbox_cid ON gw_outbox(campaign_id, status)`); err != nil {
+		return err
+	}
+	_, _ = db.Exec(`UPDATE gw_outbox SET owner_id=(SELECT owner_id FROM gw_sessions g WHERE g.name=gw_outbox.session) WHERE owner_id=0`)
+	// v1 opt-outs were global; give them to the owner of the number they came to (or the first admin).
+	_, err := db.Exec(`INSERT OR IGNORE INTO optouts(owner_id, phone, keyword, session, at)
+		SELECT COALESCE((SELECT owner_id FROM gw_sessions g WHERE g.name=o.session),
+		                (SELECT id FROM users WHERE role='superadmin' ORDER BY id LIMIT 1), 0), o.phone, o.keyword, o.session, o.at
+		FROM gw_optouts o`)
+	if err == nil {
+		_, err = db.Exec(`DELETE FROM gw_optouts`)
+	}
 	return err
 }
 

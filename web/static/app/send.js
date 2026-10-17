@@ -60,6 +60,8 @@ export async function render(ctx) {
       box.innerHTML = html`<div class="search" style="max-width:520px">${ic('search', 16)}<input type="search" data-csearch placeholder="${t('Search contacts by name or phone')}" aria-label="${t('Search contacts')}"></div><div data-cres class="mt-s"></div>`.s;
       if (st.contact) showPickedContact();
     } else {
+      const sObj = sessions.find((x) => x.name === st.session);
+      if (sObj && sObj.status !== 'connected') { box.innerHTML = html`<div class="note warn">${ic('alert', 16)}<span>${t('Connect this number to see its groups and channels.')}</span></div>`.s; return; }
       box.innerHTML = skel(3).s;
       const isCh = st.target === 'channel';
       const key = isCh ? 'channels' : 'groups';

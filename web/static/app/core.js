@@ -277,7 +277,7 @@ export function meter(label, used, limit, unit = '') {
   const tone = p >= 90 ? 'bad' : p >= 70 ? 'warn' : 'ok';
   return html`<div class="meter ${tone}">
     <div class="meter-top"><span>${label}</span><b>${fmtNum(Math.round(used * 10) / 10)}${unit}<small> / ${limit ? fmtNum(limit) + unit : t('Unlimited')}</small></b></div>
-    <div class="bar" role="progressbar" aria-label="${label}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${p}"><span style="width:${limit ? p : 0}%"></span></div></div>`;
+    <div class="bar ${limit ? '' : 'unlimited'}" role="progressbar" aria-label="${label}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${limit ? p : 0}"><span style="width:${limit ? p : 100}%"></span></div></div>`;
 }
 export function toggle(name, checked, label, hint = '') {
   return html`<label class="switch"><input type="checkbox" name="${name}" ${checked ? 'checked' : ''}><span class="track" aria-hidden="true"></span>

@@ -152,8 +152,9 @@ func TestHealthGuard(t *testing.T) {
 func TestOptoutAndWeekly(t *testing.T) {
 	m := testManager(t)
 	ctx := context.Background()
-	_, _ = m.db.Exec(`INSERT INTO gw_optouts(phone, at) VALUES('919876543210', 1)`)
-	if !isOptedOut(ctx, m.db, "919876543210@s.whatsapp.net") || isOptedOut(ctx, m.db, "919876543211@s.whatsapp.net") {
+	_, _ = m.db.Exec(`INSERT INTO optouts(owner_id, phone, at) VALUES(7, '919876543210', 1)`)
+	if !isOptedOut(ctx, m.db, 7, "919876543210@s.whatsapp.net") || isOptedOut(ctx, m.db, 7, "919876543211@s.whatsapp.net") ||
+		isOptedOut(ctx, m.db, 8, "919876543210@s.whatsapp.net") {
 		t.Fatal("opt-out lookup wrong")
 	}
 	now := time.Now().Unix()

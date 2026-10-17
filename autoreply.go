@@ -159,6 +159,14 @@ func (s *Session) runAutoReplies(chat types.JID, isGroup, firstTime bool, text s
 	}
 	rows.Close()
 	now := time.Now()
+	// Loop guard: never more than 6 automatic replies to one chat in 10 minutes
+	// (two bots talking to each other would otherwise ping-pong forever).
+	var recent int
+	_ = s.m.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM autoreply_burst WHERE owner_id=? AND chat=? AND at>?`,
+		owner, chat.String(), now.Add(-10*time.Minute).Unix()).Scan(&recent)
+	if recent >= 6 {
+		return
+	}
 	for _, rule := range rules {
 		if isGroup && rule.OnlyDM {
 			continue
@@ -204,6 +212,7 @@ func (s *Session) runAutoReplies(chat types.JID, isGroup, firstTime bool, text s
 		}
 		_, _ = s.m.db.ExecContext(ctx, `INSERT INTO autoreply_log(rule_id, chat, at) VALUES(?,?,?) ON CONFLICT(rule_id, chat) DO UPDATE SET at=excluded.at`,
 			rule.ID, chat.String(), now.Unix())
+		_, _ = s.m.db.ExecContext(ctx, `INSERT INTO autoreply_burst(owner_id, chat, at) VALUES(?,?,?)`, owner, chat.String(), now.Unix())
 		_, _ = s.m.db.ExecContext(ctx, `UPDATE autoreplies SET hits=hits+1 WHERE id=?`, rule.ID)
 		return // one reply per message
 	}
@@ -279,6 +288,12 @@ func (s *Session) onCall(e *events.CallOffer) {
 	}
 	s.hook("call", map[string]any{"from": from.String(), "from_phone": phoneOf(from), "call_id": e.CallID, "rejected": rejected, "timestamp": e.Timestamp.Unix()})
 	if rejected && strings.TrimSpace(st.RejectMessage) != "" && from.Server == types.DefaultUserServer {
+		var last int64
+		_ = s.m.db.QueryRowContext(ctx, `SELECT at FROM autoreply_log WHERE rule_id=0 AND chat=?`, from.String()).Scan(&last)
+		if time.Since(time.Unix(last, 0)) < time.Hour {
+			return // one reject message per caller per hour
+		}
+		_, _ = s.m.db.ExecContext(ctx, `INSERT INTO autoreply_log(rule_id, chat, at) VALUES(0,?,?) ON CONFLICT(rule_id, chat) DO UPDATE SET at=excluded.at`, from.String(), time.Now().Unix())
 		go func() {
 			ctx, cancel := context.WithTimeout(s.m.ctx, time.Minute)
 			defer cancel()
@@ -430,8 +445,14 @@ func (a *API) saveAutoReply(w http.ResponseWriter, r *http.Request) {
 	if ar.Keywords == nil {
 		ar.Keywords = []string{}
 	}
+	switch ar.Trigger {
+	case "any", "contains", "regex", "away", "welcome":
+		ar.CooldownMin = max(ar.CooldownMin, 1) // broad triggers always get a cooldown
+	default:
+		ar.CooldownMin = max(ar.CooldownMin, 0)
+	}
 	args := []any{truncate(ar.Name, 100), ar.Session, ar.Trigger, jsonText(ar.Keywords), jsonText(ar.Reply), b2i(ar.AI), truncate(ar.AIPrompt, 4000),
-		b2i(ar.OnlyDM), max(ar.CooldownMin, 0), jsonText(ar.Hours), b2i(ar.Active), ar.Priority}
+		b2i(ar.OnlyDM), ar.CooldownMin, jsonText(ar.Hours), b2i(ar.Active), ar.Priority}
 	if ar.ID > 0 {
 		_, err := a.m.db.ExecContext(r.Context(), `UPDATE autoreplies SET name=?, session=?, trigger_type=?, keywords=?, reply=?, ai=?, ai_prompt=?, only_dm=?, cooldown_min=?, hours=?, active=?, priority=? WHERE id=?`,
 			append(args, ar.ID)...)

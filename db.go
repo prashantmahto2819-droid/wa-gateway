@@ -58,10 +58,18 @@ CREATE TABLE IF NOT EXISTS gw_contacts (
 );
 CREATE INDEX IF NOT EXISTS gw_contacts_jid ON gw_contacts(jid);
 CREATE TABLE IF NOT EXISTS gw_optouts (
-	phone   TEXT PRIMARY KEY,   -- digits only (or the LID user part)
+	phone   TEXT PRIMARY KEY,   -- legacy (v1) table, migrated into optouts
 	keyword TEXT NOT NULL DEFAULT '',
 	session TEXT NOT NULL DEFAULT '',
 	at      INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS optouts (
+	owner_id INTEGER NOT NULL,   -- each customer has their own STOP list
+	phone    TEXT NOT NULL,      -- digits only
+	keyword  TEXT NOT NULL DEFAULT '',
+	session  TEXT NOT NULL DEFAULT '',
+	at       INTEGER NOT NULL,
+	PRIMARY KEY (owner_id, phone)
 );
 CREATE TABLE IF NOT EXISTS gw_numbers (
 	phone      TEXT PRIMARY KEY,
@@ -138,6 +146,8 @@ func cleanup(ctx context.Context, db *sql.DB, retentionDays int) {
 	cut := time.Now().AddDate(0, 0, -retentionDays).Unix()
 	_, _ = db.ExecContext(ctx, `DELETE FROM gw_outbox WHERE status IN ('sent','failed','skipped','cancelled') AND created_at<?`, cut)
 	_, _ = db.ExecContext(ctx, `DELETE FROM gw_numbers WHERE checked_at<?`, time.Now().AddDate(0, 0, -30).Unix())
+	_, _ = db.ExecContext(ctx, `DELETE FROM autoreply_burst WHERE at<?`, time.Now().Add(-time.Hour).Unix())
+	_, _ = db.ExecContext(ctx, `DELETE FROM auth_tokens WHERE expires_at<?`, time.Now().Unix())
 }
 
 // migrate adds columns introduced after the first release to older databases.
@@ -174,11 +184,25 @@ func digitsOf(addr string) string {
 	return nonDigits.ReplaceAllString(addr, "")
 }
 
-func isOptedOut(ctx context.Context, db *sql.DB, addr string) bool {
+func isOptedOut(ctx context.Context, db *sql.DB, owner int64, addr string) bool {
 	d := digitsOf(addr)
 	if d == "" {
 		return false
 	}
 	var x int
-	return db.QueryRowContext(ctx, `SELECT 1 FROM gw_optouts WHERE phone=?`, d).Scan(&x) == nil
+	return db.QueryRowContext(ctx, `SELECT 1 FROM optouts WHERE owner_id=? AND phone=?`, owner, d).Scan(&x) == nil
+}
+
+// addOptout records a STOP for one customer; returns true if it was new.
+func addOptout(ctx context.Context, db *sql.DB, owner int64, phone, keyword, session string) bool {
+	res, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO optouts(owner_id, phone, keyword, session, at) VALUES(?,?,?,?,?)`,
+		owner, phone, keyword, session, time.Now().Unix())
+	if err != nil {
+		return false
+	}
+	n, _ := res.RowsAffected()
+	if n > 0 { // nothing queued by this customer should still go out
+		_, _ = db.ExecContext(ctx, `UPDATE gw_outbox SET status='skipped', error='opted_out' WHERE status='queued' AND owner_id=? AND to_addr LIKE ?`, owner, phone+"@%")
+	}
+	return n > 0
 }

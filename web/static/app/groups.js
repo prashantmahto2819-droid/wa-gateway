@@ -21,6 +21,8 @@ export async function render(ctx) {
   const S = () => encodeURIComponent(st.session);
 
   async function load() {
+    const sObj = sessions.find((x) => x.name === st.session);
+    if (sObj && sObj.status !== 'connected') { box.innerHTML = empty('phone', t('This number is not connected'), t('Link or reconnect it under Numbers to manage its groups and channels.'), html`<a class="btn" href="/app/numbers" data-link>${t('Open numbers')}</a>`).s; return; }
     box.innerHTML = '<div class="panel-body">' + skel(6).s + '</div>';
     const key = st.tab;
     const j = await api('GET', `/api/sessions/${S()}/${key}`, undefined, { silent: true });

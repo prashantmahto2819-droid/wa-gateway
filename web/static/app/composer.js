@@ -62,7 +62,7 @@ export function bubbleHTML(m, { vars = {}, story = false, bg = '#0b6e5f' } = {})
     inner = html`<div class="b-card"><span class="avatar">${(c.name || '?').slice(0, 1).toUpperCase()}</span><div><b>${c.name || t('Contact name')}</b><div class="b-foot">${c.phone ? '+' + c.phone : ''}</div></div></div><div class="b-foot" style="text-align:center">${t('Message')}</div>`;
   } else if (k === 'menu') {
     const mn = m.menu || {}; const opts = (mn.options || []).filter((o) => o.text);
-    inner = html`${mn.title ? html`<b>${sub(mn.title)}</b>\n` : ''}${opts.map((o, i) => html`${i + 1}. ${o.text}\n`)}${mn.footer ? html`<div class="b-foot">${mn.footer}</div>` : ''}`;
+    inner = html`${mn.title ? html`<div><b>${sub(mn.title)}</b></div>` : ''}${opts.map((o, i) => html`<div>${i + 1}. ${o.text}</div>`)}${mn.footer ? html`<div class="b-foot">${mn.footer}</div>` : ''}`;
   }
   const mention = m.mention_all ? html`<div class="chat-note">${t('@everyone will be mentioned')}</div>` : '';
   return html`${mention}<div class="bubble">${inner}${ts}</div>`;
@@ -78,7 +78,7 @@ function renderText(s) {
     .replace(/(^|[\s(])_([^_\n]+)_/g, '$1<i>$2</i>')
     .replace(/(^|[\s(])~([^~\n]+)~/g, '$1<s>$2</s>')
     .replace(/@(\d{6,15})/g, '<span class="mention">@$1</span>');
-  return raw(h);
+  return raw('<span class="b-text">' + h + '</span>');
 }
 
 // ------------------------------------------------------------------ media picker

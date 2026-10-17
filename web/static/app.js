@@ -90,7 +90,7 @@ function renderShell() {
   <div class="shell">
     <aside class="rail" id="rail" aria-label="${t('Main navigation')}">
       <div class="rail-head">
-        <a href="/app" data-link class="brand" aria-label="Vivid Relay — ${t('Overview')}"><img src="/static/logo.svg" alt="" width="30" height="30"><span>Vivid Relay</span></a>
+        <a href="/app" data-link class="brand" aria-label="Vivid Relay — ${t('Overview')}"><img src="/static/favicon.svg" alt="" width="30" height="30"><span>Vivid Relay</span></a>
         <button class="btn-icon rail-close" data-act="drawer-close" aria-label="${t('Close menu')}">${ic('x')}</button>
       </div>
       <nav class="rail-nav">
@@ -112,7 +112,7 @@ function renderShell() {
     <div class="main">
       <header class="topbar">
         <button class="btn-icon only-mobile" data-act="drawer" aria-label="${t('Open menu')}" aria-controls="rail" aria-expanded="false">${ic('menu', 20)}</button>
-        <a href="/app" data-link class="brand only-mobile"><img src="/static/logo.svg" alt="" width="26" height="26"><span>Vivid Relay</span></a>
+        <a href="/app" data-link class="brand only-mobile"><img src="/static/favicon.svg" alt="" width="26" height="26"><span>Vivid Relay</span></a>
         <div class="crumb" id="crumb"></div>
         <div class="top-actions">
           <button class="btn-text lang" data-act="lang" aria-label="${t('Change language')}">${getLang() === 'hi' ? 'English' : 'हिंदी'}</button>

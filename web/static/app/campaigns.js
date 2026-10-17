@@ -89,7 +89,7 @@ async function wizard(ctx) {
     <div class="wizard">
       <ol class="wsteps" aria-label="${t('Steps')}">${STEPS.map((s, i) => html`<li data-si="${i + 1}"><button type="button" data-go="${i + 1}"><span class="n">${i + 1}</span>${t(s)}</button></li>`)}</ol>
       <div><section class="panel"><div class="panel-body" data-body></div></section>
-        <div class="wfoot"><button class="btn" data-a="back">${t('Back')}</button><span class="grow"></span><button class="btn ghost" data-a="draft">${t('Save as draft')}</button><button class="btn primary" data-a="next">${t('Continue')}</button></div></div>
+        <div class="wfoot"><button class="btn" data-a="back">${t('Back')}</button><span style="flex:1"></span><button class="btn ghost" data-a="draft">${t('Save as draft')}</button><button class="btn primary" data-a="next">${t('Continue')}</button></div></div>
     </div></div>`.s;
   const body = root.querySelector('[data-body]');
 
@@ -166,6 +166,8 @@ async function wizard(ctx) {
     body.querySelector('[name=phones]').addEventListener('input', audSummary);
     const s = w.sessions[0];
     if (!s) { body.querySelector('[data-gl]').innerHTML = html`<p class="muted">${t('Choose a number in step 1 to see its groups.')}</p>`.s; return; }
+    const sObj = sessions.find((x) => x.name === s);
+    if (sObj && sObj.status !== 'connected') { body.querySelector('[data-gl]').innerHTML = html`<p class="muted">${t('Connect this number to choose its groups and channels.')}</p>`.s; return; }
     if (!w.groupsList) {
       const [g, c] = await Promise.all([api('GET', `/api/sessions/${encodeURIComponent(s)}/groups`, undefined, { silent: true }), api('GET', `/api/sessions/${encodeURIComponent(s)}/channels`, undefined, { silent: true })]);
       w.groupsList = [...(g.ok ? g.groups || [] : []).filter((x) => x.type !== 'community').map((x) => ({ ...x, kind: 'group' })), ...(c.ok ? c.channels || [] : []).filter((x) => x.can_post).map((x) => ({ ...x, kind: 'channel' }))];

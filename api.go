@@ -7,9 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -266,6 +264,10 @@ func errStatus(err error) (int, string) {
 	case isPermanent(err):
 		return http.StatusBadRequest, "bad_request"
 	}
+	msg := err.Error()
+	if strings.Contains(msg, "SQL") || strings.Contains(msg, "sqlite") || strings.Contains(msg, "constraint") || strings.Contains(msg, "database") {
+		return http.StatusInternalServerError, "server_error"
+	}
 	return http.StatusBadGateway, "whatsapp_error"
 }
 
@@ -275,6 +277,10 @@ func (a *API) fail(w http.ResponseWriter, err error) {
 	if errors.As(err, &le) {
 		writeJSON(w, code, map[string]any{"ok": false, "code": kind, "limit": le.name, "error": err.Error()})
 		return
+	}
+	if kind == "server_error" {
+		a.m.log.Error("request failed", "err", err)
+		err = errors.New("something went wrong on the server; please try again")
 	}
 	writeErr(w, code, kind, err)
 }
@@ -482,7 +488,7 @@ func (a *API) updateSession(w http.ResponseWriter, r *http.Request) {
 		s.poke()
 	}
 	if body.Proxy != nil {
-		p, err := validateProxy(*body.Proxy)
+		p, err := vetProxy(ctx, *body.Proxy, a.cfg.AllowPrivateURLs)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "bad_proxy", err)
 			return
@@ -697,6 +703,16 @@ func (a *API) doEnqueue(w http.ResponseWriter, r *http.Request, pool []string, b
 			return
 		}
 	}
+	if body.SendAfter > time.Now().Unix()+60 {
+		if err := a.lic.require(ctx, p.UserID, "scheduler"); err != nil {
+			a.fail(w, err)
+			return
+		}
+		if body.SendAfter > time.Now().AddDate(1, 0, 0).Unix() {
+			writeErr(w, http.StatusBadRequest, "bad_request", errors.New("send_after must be within one year"))
+			return
+		}
+	}
 	msgs := body.Messages
 	if body.Template != nil {
 		for _, rc := range body.Recipients {
@@ -782,13 +798,14 @@ func (a *API) queueItem(w http.ResponseWriter, r *http.Request) {
 		Attempts                                   int
 		CreatedAt, SentAt                          int64
 	}
-	err := a.m.db.QueryRowContext(r.Context(), `SELECT id, session, campaign, to_addr, status, error, wa_id, attempts, created_at, sent_at FROM gw_outbox WHERE id=?`,
-		r.PathValue("id")).Scan(&it.ID, &it.Session, &it.Campaign, &it.To, &it.Status, &it.Error, &it.WaID, &it.Attempts, &it.CreatedAt, &it.SentAt)
-	if err == nil {
-		if s, e := a.m.get(it.Session); e == nil && !principalOf(r).Admin() && s.owner() != principalOf(r).UserID {
-			err = errNoSession
-		}
+	p := principalOf(r)
+	q := `SELECT id, session, campaign, to_addr, status, error, wa_id, attempts, created_at, sent_at FROM gw_outbox WHERE id=?`
+	args := []any{r.PathValue("id")}
+	if !p.Admin() {
+		q += ` AND owner_id=?`
+		args = append(args, p.UserID)
 	}
+	err := a.m.db.QueryRowContext(r.Context(), q, args...).Scan(&it.ID, &it.Session, &it.Campaign, &it.To, &it.Status, &it.Error, &it.WaID, &it.Attempts, &it.CreatedAt, &it.SentAt)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "not_found", errors.New("queue item not found"))
 		return
@@ -1037,21 +1054,13 @@ func (a *API) proxyTest(w http.ResponseWriter, r *http.Request) {
 	if raw == "" {
 		raw = s.row(r.Context()).proxy
 	}
-	p, err := validateProxy(raw)
+	p, err := vetProxy(r.Context(), raw, a.cfg.AllowPrivateURLs)
 	if err != nil || p == "" {
-		writeErr(w, http.StatusBadRequest, "bad_proxy", errors.New("no valid proxy to test"))
-		return
-	}
-	if !a.cfg.AllowPrivateURLs {
-		if u, _ := url.Parse(p); u != nil {
-			ips, _ := net.DefaultResolver.LookupIP(r.Context(), "ip", u.Hostname())
-			for _, ip := range ips {
-				if !publicIP(ip) {
-					writeErr(w, http.StatusBadRequest, "bad_proxy", errors.New("proxy points to a private address"))
-					return
-				}
-			}
+		if err == nil {
+			err = errors.New("no valid proxy to test")
 		}
+		writeErr(w, http.StatusBadRequest, "bad_proxy", err)
+		return
 	}
 	info, err := testProxy(r.Context(), p)
 	if err != nil {
@@ -1067,14 +1076,7 @@ func (a *API) proxyTest(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) listOptouts(w http.ResponseWriter, r *http.Request) {
 	p := principalOf(r)
-	q := `SELECT phone, keyword, session, at FROM gw_optouts`
-	var args []any
-	if !p.Admin() {
-		// Customers see opt-outs that came to their numbers, that they added, or that are in their contacts.
-		q += ` WHERE session IN (SELECT name FROM gw_sessions WHERE owner_id=?) OR session=? OR phone IN (SELECT phone FROM contacts WHERE owner_id=?)`
-		args = append(args, p.UserID, fmt.Sprintf("user:%d", p.UserID), p.UserID)
-	}
-	rows, err := a.m.db.QueryContext(r.Context(), q+` ORDER BY at DESC LIMIT 5000`, args...)
+	rows, err := a.m.db.QueryContext(r.Context(), `SELECT phone, keyword, session, at FROM optouts WHERE owner_id=? ORDER BY at DESC LIMIT 5000`, p.UserID)
 	if err != nil {
 		a.fail(w, err)
 		return
@@ -1092,42 +1094,35 @@ func (a *API) listOptouts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) addOptouts(w http.ResponseWriter, r *http.Request) {
+	p := principalOf(r)
 	var body struct {
 		Numbers []string `json:"numbers"`
 	}
-	if err := decode(r, &body); err != nil || len(body.Numbers) == 0 {
-		writeErr(w, http.StatusBadRequest, "bad_request", errors.New("numbers is required"))
+	if err := decode(r, &body); err != nil || len(body.Numbers) == 0 || len(body.Numbers) > 10000 {
+		writeErr(w, http.StatusBadRequest, "bad_request", errors.New("numbers (1-10000) is required"))
 		return
 	}
 	added := 0
 	for _, n := range body.Numbers {
 		j, err := parseTarget(n, a.cfg.DefaultCountryCode)
-		if err != nil {
+		if err != nil || j.Server != types.DefaultUserServer {
 			continue
 		}
-		if _, err := a.m.db.ExecContext(r.Context(), `INSERT OR REPLACE INTO gw_optouts(phone, keyword, session, at) VALUES(?, 'manual', ?, ?)`,
-			digitsOf(j.String()), fmt.Sprintf("user:%d", principalOf(r).UserID), time.Now().Unix()); err == nil {
+		if addOptout(r.Context(), a.m.db, p.UserID, j.User, "manual", "") {
 			added++
-			_, _ = a.m.db.ExecContext(r.Context(), `UPDATE gw_outbox SET status='skipped', error='opted_out' WHERE status='queued' AND to_addr=?`, j.String())
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "added": added})
 }
 
 func (a *API) removeOptout(w http.ResponseWriter, r *http.Request) {
+	p := principalOf(r)
 	j, err := parseTarget(r.PathValue("phone"), a.cfg.DefaultCountryCode)
 	if err != nil {
 		a.fail(w, err)
 		return
 	}
-	q := `DELETE FROM gw_optouts WHERE phone=?`
-	args := []any{digitsOf(j.String())}
-	if p := principalOf(r); !p.Admin() {
-		// Only opt-outs a customer added by hand, or that came to their own numbers.
-		q += ` AND (session=? OR session IN (SELECT name FROM gw_sessions WHERE owner_id=?))`
-		args = append(args, fmt.Sprintf("user:%d", p.UserID), p.UserID)
-	}
-	res, err := a.m.db.ExecContext(r.Context(), q, args...)
+	res, err := a.m.db.ExecContext(r.Context(), `DELETE FROM optouts WHERE owner_id=? AND phone=?`, p.UserID, digitsOf(j.String()))
 	if err != nil {
 		a.fail(w, err)
 		return

@@ -60,6 +60,7 @@ if (sig !== req.headers['x-signature']) return res.status(401).end();`)}
       <div data-secret></div></form>`,
     footer: html`<button class="btn ghost" data-close>${t('Close')}</button><button class="btn primary" data-ok>${t('Save webhook')}</button>` });
     m.foot.querySelector('[data-ok]').addEventListener('click', async (ev) => {
+      const okBtn = ev.currentTarget;
       const f = m.body.querySelector('form'); if (!f.reportValidity()) return;
       const events = $$('[name=events]:checked', f).map((x) => x.value);
       if (!events.length) return toast(t('Pick at least one event.'), 'warn');
@@ -70,7 +71,7 @@ if (sig !== req.headers['x-signature']) return res.status(401).end();`)}
       if (isNew && secret) {
         m.body.querySelector('[data-secret]').innerHTML = html`<div class="note warn">${ic('alert', 16)}<span>${t('Copy the signing secret now. It is shown only once.')}</span></div><div class="secret mt-s"><span>${secret}</span><button type="button" class="btn sm" data-copy="${secret}">${ic('copy', 14)}${t('Copy')}</button></div>`.s;
         m.body.querySelector('[data-copy]').addEventListener('click', (e) => copy(e.currentTarget.dataset.copy));
-        ev.currentTarget.remove();
+        okBtn.remove();
       } else { toast(t('Webhook saved')); m.close(); }
     });
   }

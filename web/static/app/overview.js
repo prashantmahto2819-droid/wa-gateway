@@ -113,7 +113,7 @@ function kpi(label, val, sub, icn, swatch) {
 /** Grouped bar chart (sent / received / failed per day) in inline SVG with hover tooltips and a table fallback. */
 export function drawChart(box, days) {
   const W = 640, H = 230, pl = 34, pr = 6, pt = 10, pb = 26;
-  const max = Math.max(1, ...days.map((d) => Math.max(d.sent || 0, d.received || 0, d.failed || 0)));
+  const max = Math.max(4, ...days.map((d) => Math.max(d.sent || 0, d.received || 0, d.failed || 0)));
   const step = niceStep(max); const top = Math.ceil(max / step) * step;
   const iw = W - pl - pr, ih = H - pt - pb, gw = iw / days.length, bw = Math.max(3, Math.min(10, (gw - 8) / 3));
   const y = (v) => pt + ih - (v / top) * ih;
@@ -151,5 +151,5 @@ export function drawChart(box, days) {
   svg.addEventListener('focusout', () => { tip.hidden = true; });
 }
 function roundTop(x, y, w, h, r) { return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}Z`; }
-function niceStep(max) { const raw = max / 4; const p = Math.pow(10, Math.floor(Math.log10(raw))); const n = raw / p; return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * p; }
+function niceStep(max) { if (max <= 4) return 1; const raw = max / 4; const p = Math.pow(10, Math.floor(Math.log10(raw))); const n = raw / p; return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * p; }
 function fmtShort(v) { return v >= 1000 ? (v / 1000).toFixed(v % 1000 ? 1 : 0) + 'k' : String(v); }

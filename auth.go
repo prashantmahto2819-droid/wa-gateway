@@ -313,6 +313,9 @@ func (a *API) mode() string {
 }
 
 func (a *API) authSetup(w http.ResponseWriter, r *http.Request) {
+	if !requireHeader(w, r) {
+		return
+	}
 	var b struct {
 		APIKey   string `json:"api_key"`
 		Name     string `json:"name"`
@@ -335,8 +338,19 @@ func (a *API) authSetup(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "bad_api_key", errors.New("API key does not match the one in .env"))
 		return
 	}
+	if _, perr := validateNewUser(b.Email, b.Password); perr != nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", perr)
+		return
+	}
+	// Only one request may win the setup, even if two arrive together.
+	res, err := a.m.db.ExecContext(r.Context(), `INSERT OR IGNORE INTO settings(key, value) VALUES('setup_done', '1')`)
+	if n, _ := rowsAffected(res, err); n == 0 {
+		writeErr(w, http.StatusConflict, "already_setup", errAlreadySetup)
+		return
+	}
 	u, err := createUser(r.Context(), a.m.db, b.Name, b.Email, "", b.Password, "superadmin")
 	if err != nil {
+		_, _ = a.m.db.ExecContext(r.Context(), `DELETE FROM settings WHERE key='setup_done'`)
 		writeErr(w, http.StatusBadRequest, "bad_request", err)
 		return
 	}
@@ -348,6 +362,9 @@ func (a *API) authSetup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) authSignup(w http.ResponseWriter, r *http.Request) {
+	if !requireHeader(w, r) {
+		return
+	}
 	var b struct {
 		Name     string `json:"name"`
 		Email    string `json:"email"`
@@ -386,6 +403,9 @@ func (a *API) authSignup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) authLogin(w http.ResponseWriter, r *http.Request) {
+	if !requireHeader(w, r) {
+		return
+	}
 	var b struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
@@ -412,7 +432,18 @@ func (a *API) authLogin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "user": u})
 }
 
+func requireHeader(w http.ResponseWriter, r *http.Request) bool {
+	if r.Header.Get("X-Requested-With") != "vivid" {
+		writeErr(w, http.StatusForbidden, "csrf", errors.New("missing X-Requested-With header"))
+		return false
+	}
+	return true
+}
+
 func (a *API) authLogout(w http.ResponseWriter, r *http.Request) {
+	if !requireHeader(w, r) {
+		return
+	}
 	if c, err := r.Cookie(sessionCookie); err == nil {
 		_, _ = a.m.db.ExecContext(r.Context(), `DELETE FROM auth_tokens WHERE token_hash=?`, sha(c.Value))
 	}

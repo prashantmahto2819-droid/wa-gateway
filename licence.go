@@ -256,7 +256,10 @@ func (l *Licensing) effective(ctx context.Context, userID int64) *EffLicence {
 	if err != nil {
 		return &EffLicence{Source: "none", Status: "none"}
 	}
-	plan, _ := getPlan(ctx, l.db, planID)
+	plan, err := getPlan(ctx, l.db, planID)
+	if err != nil {
+		return &EffLicence{Source: "none", Status: "none"}
+	}
 	src := "licence"
 	if strings.HasPrefix(key, "TRIAL-") {
 		src = "trial"
@@ -273,7 +276,7 @@ func (l *Licensing) effective(ctx context.Context, userID int64) *EffLicence {
 
 func licenceErr(eff *EffLicence) error {
 	switch {
-	case eff == nil || eff.Status == "none":
+	case eff == nil || eff.Status == "none" || eff.Plan == nil:
 		return errLicenceRequired
 	case eff.Status != "active":
 		return errLicenceExpired
@@ -491,6 +494,9 @@ func verifyToken(token, pubB64 string) (*tokenPayload, error) {
 	var p tokenPayload
 	if err := json.Unmarshal(body, &p); err != nil {
 		return nil, err
+	}
+	if p.Plan == nil {
+		return nil, errors.New("licence token has no plan")
 	}
 	return &p, nil
 }
