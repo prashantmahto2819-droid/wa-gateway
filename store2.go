@@ -246,6 +246,7 @@ func migrate2(db *sql.DB) error {
 		{"gw_outbox", "campaign_id", "INTEGER NOT NULL DEFAULT 0"},
 		{"gw_outbox", "speed_factor", "INTEGER NOT NULL DEFAULT 1"},
 		{"gw_outbox", "owner_id", "INTEGER NOT NULL DEFAULT 0"},
+		{"campaigns", "rotation", "TEXT NOT NULL DEFAULT 'smart'"},
 	}
 	for _, a := range adds {
 		if err := addColumn(db, a.table, a.col, a.def); err != nil {

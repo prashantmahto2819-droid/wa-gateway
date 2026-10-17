@@ -1,6 +1,7 @@
 import { api, html, raw, ic, t, fmtNum, fmtDate, relTime, pill, campaignTone, skel, empty, toast, confirmBox, getSessions, sessionName, fmtPhone, parsePhones, debounce, toLocalInput, fromLocalInput, fmtDuration, sessionStatus, $$ } from '/static/app/core.js';
 import { createComposer, summarize } from '/static/app/composer.js';
 import { loadTemplate } from '/static/app/send.js';
+import { waContactsPicker, chatsPicker } from '/static/app/pickers.js';
 
 const STATUSES = ['all', 'draft', 'scheduled', 'running', 'paused', 'done', 'cancelled'];
 const STATUS_LABEL = { draft: 'Draft', scheduled: 'Scheduled', running: 'Running', paused: 'Paused', done: 'Done', cancelled: 'Cancelled' };
@@ -79,7 +80,11 @@ async function wizard(ctx) {
     contactObjs: [],
     schedule: { mode: 'now', at: 0, repeat: 'none', days: [1, 2, 3, 4, 5], until: 0, ...(base.schedule || {}) },
     speed: base.speed || 'safe',
-    groupsList: null,
+    rotation: base.rotation || 'smart',
+    versions: [{ ...(base.message || { text: '' }), variants: undefined }, ...((base.message && base.message.variants) || [])],
+    vi: 0,
+    waSel: new Set(),
+    chatSel: new Set([...(base.audience?.groups || []), ...(base.audience?.channels || [])]),
   };
   if (w.schedule.at) w.schedule.mode = 'later';
   let comp = null;
@@ -116,11 +121,19 @@ async function wizard(ctx) {
           ${sessions.length ? html`<div class="choice-grid">${sessions.map((s) => { const st = sessionStatus(s.status); return html`<label class="choice"><input type="checkbox" name="sess" value="${s.name}" ${w.sessions.includes(s.name) ? 'checked' : ''}>
             <b>${ic('phone', 16)}${sessionName(s)}</b><small>${s.phone ? fmtPhone(s.phone) : t('Not linked')}</small><span>${pill(st.label, st.tone)}</span></label>`; })}</div>`
           : empty('phone', t('No numbers yet'), '', html`<a class="btn" href="/app/numbers" data-link>${t('Add number')}</a>`)}
-        </fieldset></div>`.s;
+        </fieldset>
+        <fieldset data-rot ${w.sessions.length > 1 ? '' : 'hidden'}><legend>${t('With several numbers')}</legend><div class="choice-grid">
+          <label class="choice"><input type="radio" name="rotation" value="smart" ${w.rotation !== 'random' ? 'checked' : ''}><b>${ic('shield', 16)}${t('Smart (recommended)')}</b><small>${t('Each person always hears from the same number — the one they chatted with, else the least busy.')}</small></label>
+          <label class="choice"><input type="radio" name="rotation" value="random" ${w.rotation === 'random' ? 'checked' : ''}><b>${ic('refresh', 16)}${t('Random number')}</b><small>${t('Each person gets the message from a randomly chosen number.')}</small></label></div></fieldset></div>`.s;
       body.querySelector('[name=cname]').focus();
     } else if (w.step === 2) {
-      body.innerHTML = html`<div class="row between mb"><h2>${t('Message')}</h2><button class="btn sm ghost" data-a="tpl">${ic('template', 15)}${t('Load a template')}</button></div><div data-comp></div>`.s;
-      comp = createComposer(body.querySelector('[data-comp]'), { message: w.message, groupMode: w.aud.groups.length > 0, customVars: ['city'] });
+      body.innerHTML = html`<div class="row between mb"><h2>${t('Message')}</h2><button class="btn sm ghost" data-a="tpl">${ic('template', 15)}${t('Load a template')}</button></div>
+        <div class="versions" role="tablist" aria-label="${t('Message versions')}">${w.versions.map((_, i) => html`<button type="button" class="btn sm" role="tab" data-ver="${i}" aria-selected="${i === w.vi}">${t('Version {n}', { n: i + 1 })}</button>`)}
+          ${w.versions.length < 10 ? html`<button type="button" class="btn sm ghost" data-a="ver-add">${ic('plus', 14)}${t('Add another version')}</button>` : ''}
+          ${w.versions.length > 1 ? html`<button type="button" class="btn sm ghost danger" data-a="ver-rm">${ic('trash', 14)}${t('Remove this version')}</button>` : ''}</div>
+        <p class="hint mb">${w.versions.length > 1 ? t('Each person gets one of these {n} versions at random, so messages are not identical.', { n: w.versions.length }) : t('Tip: add 2–3 versions of the message; each person gets one at random. Spintax {Hi|Hello} also works inside a version.')}</p>
+        <div data-comp></div>`.s;
+      comp = createComposer(body.querySelector('[data-comp]'), { message: w.versions[w.vi], groupMode: w.aud.groups.length > 0, customVars: ['city'] });
     } else if (w.step === 3) {
       drawAudience();
     } else if (w.step === 4) {
@@ -159,24 +172,19 @@ async function wizard(ctx) {
       <fieldset><legend>${t('Phone numbers')}</legend>
         <textarea name="phones" rows="3" placeholder="919876543210&#10;919812345678">${a.phones.join('\n')}</textarea>
         <p class="hint">${t('Paste numbers with country code, one per line or separated by commas.')} <span data-pc></span></p></fieldset>
-      <fieldset><legend>${t('Groups and channels')}</legend><div data-gl>${skel(2)}</div></fieldset>
+      <fieldset><legend>${t('WhatsApp contacts')}</legend><p class="hint" style="margin:-6px 0 10px">${t('Saved and unsaved contacts of the first number, A to Z. Tick the people to include.')}</p><div data-wa></div></fieldset>
+      <fieldset><legend>${t('Groups, communities and channels')}</legend><div data-gl></div></fieldset>
       <fieldset><legend>${t('Your status')}</legend>${raw(`<label class="switch"><input type="checkbox" name="statuses" ${a.statuses ? 'checked' : ''}><span class="track"></span><span class="switch-text"><span>${t('Also post this message to my Status')}</span><small>${t('Text and photo messages only.')}</small></span></label>`)}</fieldset>
       <div class="note info" data-aud-sum></div></div>`.s;
     drawPicked(); audSummary();
     body.querySelector('[name=phones]').addEventListener('input', audSummary);
     const s = w.sessions[0];
-    if (!s) { body.querySelector('[data-gl]').innerHTML = html`<p class="muted">${t('Choose a number in step 1 to see its groups.')}</p>`.s; return; }
+    const wa = body.querySelector('[data-wa]'), gl = body.querySelector('[data-gl]');
+    if (!s) { wa.innerHTML = gl.innerHTML = html`<p class="muted">${t('Choose a number in step 1 first.')}</p>`.s; return; }
     const sObj = sessions.find((x) => x.name === s);
-    if (sObj && sObj.status !== 'connected') { body.querySelector('[data-gl]').innerHTML = html`<p class="muted">${t('Connect this number to choose its groups and channels.')}</p>`.s; return; }
-    if (!w.groupsList) {
-      const [g, c] = await Promise.all([api('GET', `/api/sessions/${encodeURIComponent(s)}/groups`, undefined, { silent: true }), api('GET', `/api/sessions/${encodeURIComponent(s)}/channels`, undefined, { silent: true })]);
-      w.groupsList = [...(g.ok ? g.groups || [] : []).filter((x) => x.type !== 'community').map((x) => ({ ...x, kind: 'group' })), ...(c.ok ? c.channels || [] : []).filter((x) => x.can_post).map((x) => ({ ...x, kind: 'channel' }))];
-    }
-    if (!ctx.isCurrent() || w.step !== 3) return;
-    const gl = body.querySelector('[data-gl]');
-    gl.innerHTML = w.groupsList.length ? html`<div class="target-list">${w.groupsList.map((x) => html`<label><input type="checkbox" name="${x.kind === 'channel' ? 'chan' : 'grp'}" value="${x.jid}" ${(x.kind === 'channel' ? a.channels : a.groups).includes(x.jid) ? 'checked' : ''}>
-      ${ic(x.kind === 'channel' ? 'channel' : 'group', 16)}<span class="grow"><b class="ellipsis" style="display:block">${x.name}</b><small class="muted">${x.kind === 'channel' ? t('Channel') + ' · ' + t('{n} followers', { n: x.subscribers ?? 0 }) : (x.type === 'community_announcements' ? t('Community announcements') : t('Group')) + ' · ' + t('{n} members', { n: x.participants ?? 0 })}</small></span></label>`)}</div>`.s
-      : html`<p class="muted">${t('This number is not in any groups or channels you can post to.')}</p>`.s;
+    if (sObj && sObj.status !== 'connected') { wa.innerHTML = gl.innerHTML = html`<p class="muted">${t('Connect this number to choose its contacts, groups and channels.')}</p>`.s; return; }
+    waContactsPicker(wa, { session: s, selected: w.waSel, onChange: audSummary });
+    chatsPicker(gl, { session: s, selected: w.chatSel, onChange: audSummary });
   }
   function drawPicked() {
     const box = body.querySelector('[data-cpicked]'); if (!box) return;
@@ -186,14 +194,15 @@ async function wizard(ctx) {
     collect();
     const a = w.aud; const tagCount = tags.filter((x) => a.tags.includes(x.tag)).reduce((s, x) => s + x.count, 0);
     const el = body.querySelector('[data-aud-sum]'); if (!el) return;
-    el.innerHTML = html`${ic('users', 16)}<span>${t('About {n} recipients', { n: fmtNum(estimateTotal()) })} — ${t('{a} from tags, {b} contacts, {c} numbers, {d} groups/channels', { a: fmtNum(tagCount), b: a.contacts.length, c: a.phones.length, d: a.groups.length + a.channels.length })}${a.exclude_tags.length ? ' · ' + t('excluding {t}', { t: a.exclude_tags.join(', ') }) : ''}</span>`.s;
+    el.innerHTML = html`${ic('users', 16)}<span>${t('About {n} recipients', { n: fmtNum(estimateTotal()) })} — ${t('{a} from tags, {b} contacts, {c} numbers, {d} groups/channels', { a: fmtNum(tagCount), b: a.contacts.length, c: allPhones().length, d: a.groups.length + a.channels.length })}${a.exclude_tags.length ? ' · ' + t('excluding {t}', { t: a.exclude_tags.join(', ') }) : ''}</span>`.s;
     const pc = body.querySelector('[data-pc]'); if (pc) pc.textContent = a.phones.length ? t('{n} valid numbers', { n: a.phones.length }) : '';
   }
   function estimateTotal() {
     const a = w.aud;
-    return tags.filter((x) => a.tags.includes(x.tag)).reduce((s, x) => s + x.count, 0) + a.contacts.length + a.phones.length + a.groups.length + a.channels.length + (a.statuses ? 1 : 0);
+    return tags.filter((x) => a.tags.includes(x.tag)).reduce((s, x) => s + x.count, 0) + a.contacts.length + allPhones().length + a.groups.length + a.channels.length + (a.statuses ? 1 : 0);
   }
 
+  function allPhones() { return [...new Set([...w.aud.phones, ...w.waSel])]; }
   function drawReview() {
     const a = w.aud, sc = w.schedule;
     const n = estimateTotal();
@@ -207,7 +216,9 @@ async function wizard(ctx) {
         <dl class="summary">
           <div><dt>${t('Name')}</dt><dd>${w.name}</dd></div>
           <div><dt>${t('From')}</dt><dd>${w.sessions.map((s) => sessionName(sessions.find((x) => x.name === s) || { name: s })).join(', ')}</dd></div>
-          <div><dt>${t('Audience')}</dt><dd>${[a.tags.length && t('Tags') + ': ' + a.tags.join(', '), a.exclude_tags.length && t('Excluding') + ': ' + a.exclude_tags.join(', '), a.contacts.length && t('{n} contacts', { n: a.contacts.length }), a.phones.length && t('{n} numbers', { n: a.phones.length }), a.groups.length && t('{n} groups', { n: a.groups.length }), a.channels.length && t('{n} channels', { n: a.channels.length }), a.statuses && t('My status')].filter(Boolean).join(' · ') || '—'}</dd></div>
+          <div><dt>${t('Audience')}</dt><dd>${[a.tags.length && t('Tags') + ': ' + a.tags.join(', '), a.exclude_tags.length && t('Excluding') + ': ' + a.exclude_tags.join(', '), a.contacts.length && t('{n} contacts', { n: a.contacts.length }), allPhones().length && t('{n} numbers', { n: allPhones().length }), a.groups.length && t('{n} groups', { n: a.groups.length }), a.channels.length && t('{n} channels', { n: a.channels.length }), a.statuses && t('My status')].filter(Boolean).join(' · ') || '—'}</dd></div>
+          ${w.versions.length > 1 ? html`<div><dt>${t('Message versions')}</dt><dd>${t('{n}, picked at random per person', { n: w.versions.length })}</dd></div>` : ''}
+          ${w.sessions.length > 1 ? html`<div><dt>${t('Number choice')}</dt><dd>${w.rotation === 'random' ? t('Random number') : t('Smart (recommended)')}</dd></div>` : ''}
           <div><dt>${t('When')}</dt><dd>${whenTxt}</dd></div>
           <div><dt>${t('Speed')}</dt><dd>${t({ safe: 'Safe', normal: 'Normal', slow: 'Very slow' }[w.speed])}</dd></div>
         </dl>
@@ -226,9 +237,13 @@ async function wizard(ctx) {
     const f = (n) => body.querySelector(`[name="${n}"]`);
     if (f('cname')) w.name = f('cname').value.trim();
     if (body.querySelector('[name=sess]')) w.sessions = $$('[name=sess]:checked', body).map((x) => x.value);
-    if (comp && w.step === 2) w.message = comp.get();
+    if (comp && w.step === 2) w.versions[w.vi] = comp.get();
+    const [first, ...rest] = w.versions;
+    w.message = { ...first, variants: rest.length ? rest : undefined };
     if (f('phones')) w.aud.phones = parsePhones(f('phones').value);
-    if (body.querySelector('[data-gl] input')) { w.aud.groups = $$('[name=grp]:checked', body).map((x) => x.value); w.aud.channels = $$('[name=chan]:checked', body).map((x) => x.value); }
+    w.aud.groups = [...w.chatSel].filter((x) => x.endsWith('@g.us'));
+    w.aud.channels = [...w.chatSel].filter((x) => x.endsWith('@newsletter'));
+    if (body.querySelector('[name=rotation]')) w.rotation = body.querySelector('[name=rotation]:checked')?.value || 'smart';
     if (f('statuses')) w.aud.statuses = f('statuses').checked;
     if (body.querySelector('[name=when]')) {
       w.schedule.mode = body.querySelector('[name=when]:checked')?.value || 'now';
@@ -241,7 +256,7 @@ async function wizard(ctx) {
   }
   function check(step) {
     if (step === 1) { if (!w.name) return t('Give the campaign a name.'); if (!w.sessions.length) return t('Choose at least one number.'); }
-    if (step === 2 && comp) { const e = comp.validate(); if (e) return e; }
+    if (step === 2 && comp) { const e = comp.validate(); if (e) return w.versions.length > 1 ? t('Version {n}', { n: w.vi + 1 }) + ': ' + e : e; }
     if (step === 3 && !estimateTotal()) return t('Add at least one recipient.');
     if (step === 4 && w.schedule.mode === 'later') {
       if (!w.schedule.at) return t('Pick a date and time.');
@@ -252,7 +267,7 @@ async function wizard(ctx) {
   }
   function payload(draft) {
     const sc = w.schedule;
-    const p = { name: w.name || t('Untitled'), sessions: w.sessions, message: w.message, audience: { ...w.aud }, speed: w.speed, draft: !!draft };
+    const p = { name: w.name || t('Untitled'), sessions: w.sessions, message: w.message, audience: { ...w.aud, phones: allPhones() }, speed: w.speed, rotation: w.rotation, draft: !!draft };
     if (sc.mode === 'later') p.schedule = { at: sc.at, repeat: sc.repeat, days: sc.repeat === 'weekly' ? sc.days : [], until: sc.until || 0 };
     return p;
   }
@@ -271,11 +286,16 @@ async function wizard(ctx) {
     const add = e.target.closest('[data-addc]');
     if (add) { const c = body.querySelector('[data-cres]')._list.find((x) => String(x.id) === add.dataset.addc); if (c && !w.aud.contacts.includes(c.id)) { w.aud.contacts.push(c.id); w.contactObjs.push(c); drawPicked(); audSummary(); } return; }
     if (e.target.closest('[data-a="tpl"]')) loadTemplate(comp);
+    const ver = e.target.closest('[data-ver]');
+    if (ver && comp) { const err = comp.validate(); if (err) return toast(err, 'warn'); collect(); comp = null; w.vi = +ver.dataset.ver; draw(); return; }
+    if (e.target.closest('[data-a="ver-add"]') && comp) { const err = comp.validate(); if (err) return toast(err, 'warn'); collect(); comp = null; w.versions.push({ ...w.versions[w.vi], variants: undefined }); w.vi = w.versions.length - 1; draw(); toast(t('Copied the current version — now change it a little.')); return; }
+    if (e.target.closest('[data-a="ver-rm"]') && comp) { comp = null; w.versions.splice(w.vi, 1); w.vi = Math.max(0, w.vi - 1); comp = null; draw(); return; }
   });
   body.addEventListener('change', (e) => {
     if (e.target.name === 'when') body.querySelector('[data-later]').hidden = e.target.value !== 'later';
     if (e.target.name === 'repeat') { body.querySelector('[data-days]').hidden = e.target.value !== 'weekly'; body.querySelector('[data-until]').hidden = e.target.value === 'none'; }
-    if (['grp', 'chan', 'statuses'].includes(e.target.name)) audSummary();
+    if (e.target.name === 'statuses') audSummary();
+    if (e.target.name === 'sess') { const r = body.querySelector('[data-rot]'); if (r) r.hidden = $$('[name=sess]:checked', body).length < 2; }
   });
   body.addEventListener('input', debounce(async (e) => {
     if (!e.target.matches('[data-cs]')) return;

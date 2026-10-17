@@ -113,6 +113,7 @@ func (a *API) routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{name}/groups/{jid}/leave", auth(a.leaveGroup))
 	mux.HandleFunc("POST /api/sessions/{name}/groups/{jid}/save-contacts", auth(a.saveGroupContacts))
 	mux.HandleFunc("GET /api/sessions/{name}/channels", auth(a.channels))
+	mux.HandleFunc("GET /api/sessions/{name}/wa-contacts", auth(a.waContacts))
 	mux.HandleFunc("POST /api/sessions/{name}/channels", auth(a.createChannel))
 	mux.HandleFunc("GET /api/sessions/{name}/channels/resolve", auth(a.resolveChannel))
 
@@ -640,6 +641,7 @@ type queueBody struct {
 	} `json:"recipients"`
 	SendAfter int64    `json:"send_after"` // optional unix time: don't start before this
 	Pool      []string `json:"pool"`       // optional: spread over these sessions
+	Random    bool     `json:"random"`     // pool: pick a random number per person (default: keep each person on one number)
 }
 
 func (a *API) enqueue(w http.ResponseWriter, r *http.Request) {
@@ -747,7 +749,7 @@ func (a *API) doEnqueue(w http.ResponseWriter, r *http.Request, pool []string, b
 	if s, err := a.m.get(pool[0]); err == nil {
 		owner = s.owner()
 	}
-	res, err := a.m.enqueue(ctx, owner, pool, 0, body.Campaign, msgs, body.SendAfter, 1)
+	res, err := a.m.enqueue(ctx, owner, pool, 0, body.Campaign, msgs, body.SendAfter, 1, body.Random)
 	if err != nil {
 		a.fail(w, err)
 		return
@@ -987,7 +989,9 @@ func (a *API) groups(w http.ResponseWriter, r *http.Request) {
 			kind = "community_announcements" // post here to reach the whole community
 		}
 		item := map[string]any{"jid": g.JID.String(), "name": g.Name, "type": kind, "participants": len(g.Participants),
-			"announce_only": g.IsAnnounce, "i_am_admin": admin}
+			"announce_only": g.IsAnnounce, "i_am_admin": admin,
+			// Only admins may post where "only admins can send" is on (always so in community announcements).
+			"can_post": kind != "community" && (!g.IsAnnounce || admin)}
 		if !g.LinkedParentJID.IsEmpty() {
 			item["community"] = g.LinkedParentJID.String()
 		}

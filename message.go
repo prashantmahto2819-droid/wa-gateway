@@ -45,6 +45,11 @@ type SendRequest struct {
 	MentionAll bool         `json:"mention_all,omitempty"` // groups: notify every member
 	Preview    *bool        `json:"preview,omitempty"`     // link preview card for the first link (default on)
 	Background string       `json:"background,omitempty"`  // text Status background colour (#RRGGBB)
+
+	StatusAudience *StatusAudience `json:"status_audience,omitempty"` // Status only: who sees it
+	// Variants: other versions of this message; each recipient gets one of
+	// [this message + variants] at random (campaigns and API sends).
+	Variants []SendRequest `json:"variants,omitempty"`
 }
 
 type PollReq struct {
@@ -126,6 +131,25 @@ func (r *SendRequest) validate() error {
 
 // validateContent checks the message itself (used without "to" by templates/campaigns).
 func (r *SendRequest) validateContent() error {
+	if len(r.Variants) > 9 {
+		return errors.New("at most 9 variants (10 versions in total)")
+	}
+	for i := range r.Variants {
+		v := &r.Variants[i]
+		if len(v.Variants) > 0 {
+			return errors.New("variants can't have variants of their own")
+		}
+		if err := v.validateContent(); err != nil {
+			return fmt.Errorf("variant %d: %w", i+2, err)
+		}
+	}
+	if a := r.StatusAudience; a != nil {
+		switch a.Mode {
+		case "", "auto", "tags", "phones":
+		default:
+			return errors.New("status_audience.mode must be auto, tags or phones")
+		}
+	}
 	kinds := 0
 	for _, set := range []bool{r.Poll != nil, r.Location != nil, r.Contact != nil, r.Menu != nil, r.Buttons != nil, r.List != nil, r.Carousel != nil} {
 		if set {
@@ -491,7 +515,7 @@ func buildMessage(ctx context.Context, cli *whatsmeow.Client, to types.JID, req 
 			msg = &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String(text), ContextInfo: ci}}
 		}
 		if req.Preview == nil || *req.Preview {
-			applyLinkPreview(ctx, msg, text, cfg.AllowPrivateURLs)
+			applyLinkPreview(ctx, cli, msg, text, cfg.AllowPrivateURLs)
 		}
 		return msg, "", nil
 	}
@@ -514,6 +538,13 @@ func buildMessage(ctx context.Context, cli *whatsmeow.Client, to types.JID, req 
 	}
 	if err != nil {
 		return nil, "", fmt.Errorf("media upload failed: %w", err)
+	}
+	// Photos carry a small inline preview and their size; Status in
+	// particular shows nothing in the ring without them.
+	var thumb []byte
+	var imgW, imgH int
+	if req.Media.Type == "image" {
+		thumb, imgW, imgH = mediaThumb(data)
 	}
 	data = nil // let the memory go right away
 
@@ -549,7 +580,11 @@ func buildMessage(ctx context.Context, cli *whatsmeow.Client, to types.JID, req 
 	switch req.Media.Type {
 	case "image":
 		msg.ImageMessage = &waE2E.ImageMessage{Caption: caption, Mimetype: proto.String(mimetype), URL: url, DirectPath: dp,
-			MediaKey: mediaKey, FileEncSHA256: encSHA, FileSHA256: up.FileSHA256, FileLength: length, ContextInfo: ci}
+			MediaKey: mediaKey, FileEncSHA256: encSHA, FileSHA256: up.FileSHA256, FileLength: length, ContextInfo: ci,
+			JPEGThumbnail: thumb}
+		if imgW > 0 {
+			msg.ImageMessage.Width, msg.ImageMessage.Height = proto.Uint32(uint32(imgW)), proto.Uint32(uint32(imgH))
+		}
 	case "video":
 		msg.VideoMessage = &waE2E.VideoMessage{Caption: caption, Mimetype: proto.String(mimetype), URL: url, DirectPath: dp,
 			MediaKey: mediaKey, FileEncSHA256: encSHA, FileSHA256: up.FileSHA256, FileLength: length, ContextInfo: ci}

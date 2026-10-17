@@ -22,6 +22,20 @@ type SendResult struct {
 	Timestamp  int64  `json:"timestamp"`
 	NewContact bool   `json:"new_contact"`        // true if this person never wrote to us before
 	Fallback   bool   `json:"fallback,omitempty"` // interactive message was sent as a numbered text menu instead
+	// Unconfirmed: the message left the gateway but WhatsApp's "received"
+	// reply didn't come in time. It is almost always delivered; it is never
+	// sent again (that would make a duplicate).
+	Unconfirmed bool `json:"unconfirmed,omitempty"`
+	Recipients  int  `json:"recipients,omitempty"` // Status: how many people it was shared with
+}
+
+// leftGateway reports whether a failed SendMessage had already written the
+// message to WhatsApp (only the server's acknowledgement was missing).
+func leftGateway(err error, resp whatsmeow.SendResponse) bool {
+	if errors.Is(err, whatsmeow.ErrMessageTimedOut) {
+		return true
+	}
+	return resp.DebugTimings.Send > 0 && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled))
 }
 
 // permanent errors are not retried by the queue.
@@ -191,6 +205,12 @@ func (s *Session) send(ctx context.Context, req *SendRequest, opts sendOpts) (*S
 	if err := req.validate(); err != nil {
 		return nil, err
 	}
+	if len(req.Variants) > 0 {
+		s.rndMu.Lock()
+		n := s.rnd.IntN(len(req.Variants) + 1)
+		s.rndMu.Unlock()
+		req = req.variant(n)
+	}
 	cli, err := s.ready()
 	if err != nil {
 		return nil, err
@@ -204,10 +224,17 @@ func (s *Session) send(ctx context.Context, req *SendRequest, opts sendOpts) (*S
 		return &SendResult{To: to.String(), NewContact: newContact}, err
 	}
 	isStatus := to == types.StatusBroadcastJID
+	statusCount := 0
 	if isStatus {
 		if err := s.m.lic.require(ctx, owner, "status"); err != nil {
 			return nil, err
 		}
+		list, err := s.statusRecipients(ctx, cli, owner, req.StatusAudience)
+		if err != nil {
+			return &SendResult{To: to.String()}, err
+		}
+		statusCount = len(list)
+		ctx = context.WithValue(ctx, statusAudKey{}, list)
 	}
 	r := s.row(ctx)
 	if err := s.checkLimits(ctx, r, newContact, opts.slow); err != nil {
@@ -284,8 +311,18 @@ func (s *Session) send(ctx context.Context, req *SendRequest, opts sendOpts) (*S
 		}
 	}
 
-	resp, err := cli.SendMessage(ctx, to, msg, whatsmeow.SendRequestExtra{MediaHandle: handle, AdditionalNodes: extraNodes})
-	res := &SendResult{To: to.String(), NewContact: newContact}
+	msgID := cli.GenerateMessageID()
+	resp, err := cli.SendMessage(ctx, to, msg, whatsmeow.SendRequestExtra{ID: msgID, MediaHandle: handle, AdditionalNodes: extraNodes,
+		Timeout: 2 * time.Minute})
+	res := &SendResult{To: to.String(), NewContact: newContact, Recipients: statusCount}
+	if err != nil && leftGateway(err, resp) {
+		// Big Status audiences and slow links can outlast the acknowledgement;
+		// the message is out, so report it as sent rather than failed.
+		s.m.log.Warn("send not acknowledged in time, treating as sent", "session", s.name, "to", to.String(), "id", msgID, "err", err)
+		err = nil
+		resp.ID, resp.Timestamp = msgID, time.Now()
+		res.Unconfirmed = true
+	}
 	if err != nil && interactive && (serverErrCode(err) == "405" || serverErrCode(err) == "400") {
 		// WhatsApp refused the interactive form for this account: send the same
 		// content as a numbered text menu so automations never get stuck.

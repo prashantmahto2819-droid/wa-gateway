@@ -50,8 +50,8 @@ cd wa-gateway
 | हिस्सा | सुविधाएँ |
 |---|---|
 | **Numbers** | QR या pairing code से कई नंबर • हर नंबर का अलग proxy (test के साथ) • call अपने-आप काटना + मैसेज • groups/channels अनदेखा करना • always-online • health (fail rate, reply rate) |
-| **Send** | Text (link हो तो **preview card** अपने-आप — title, description, image), फ़ोटो, वीडियो, document, audio/voice, **poll** (vote का हिसाब), location, contact card, **numbered menu** (जवाब "2" → option), **buttons** (reply / link / call / copy — फ़ोटो header के साथ भी), **list menu** (tap करके चुनें), **carousel** (फ़ोटो + buttons वाले 2–10 cards), mention-all, reply/quote, react, edit, delete, **WhatsApp Status** |
-| **Campaigns** | Audience: tags (include/exclude), चुने contacts, पेस्ट किए नंबर, groups, channels, Status • `{{name}}`, `{{city}}` जैसे variables + `{नमस्ते|प्रणाम}` spintax • एक बार / रोज़ / हफ़्ते के दिन / महीने का schedule, "until" तारीख • speed: safe/normal/slow • कई नंबरों में rotation • pause/resume/cancel/duplicate/run-now • CSV report |
+| **Send** | Text (link हो तो **preview card** अपने-आप — title, description, image), फ़ोटो, वीडियो, document, audio/voice, **poll** (vote का हिसाब), location, contact card, **numbered menu** (जवाब "2" → option), **buttons** (reply / link / call / copy — फ़ोटो header के साथ भी), **list menu** (tap करके चुनें), **carousel** (फ़ोटो + buttons वाले 2–10 cards), mention-all, reply/quote, react, edit, delete, **WhatsApp Status** (अभी या schedule — रोज़/हफ़्ते के दिन; कौन देखे: automatic / tag / चुने हुए लोग) • भेजने के लिए **WhatsApp contacts** (saved + unsaved, A–Z, search, letter filter) और **groups/communities/channels** (search, "सिर्फ़ जहाँ मैं post कर सकूँ") में से tick करके चुनें — कई चुनें तो एक-एक करके सुरक्षित अंतर से जाते हैं |
+| **Campaigns** | Audience: tags (include/exclude), चुने contacts, पेस्ट किए नंबर, groups, channels, Status • `{{name}}`, `{{city}}` जैसे variables + `{नमस्ते|प्रणाम}` spintax • एक बार / रोज़ / हफ़्ते के दिन / महीने का schedule, "until" तारीख • speed: safe/normal/slow • कई नंबरों में rotation — smart (हर व्यक्ति एक ही नंबर से) या **random नंबर** • **मैसेज के कई versions** (हर व्यक्ति को कोई एक random) • pause/resume/cancel/duplicate/run-now • CSV report |
 | **Contacts (CRM)** | Tags, custom fields, CSV import (Excel CSV, `;` या tab भी) / export, bulk actions, अपने-आप save (जो मैसेज करे), STOP opt-out सूची, group के members को contacts में save |
 | **Automation** | Auto-reply: welcome (पहला मैसेज), exact keyword, contains, regex, menu choice, कोई भी मैसेज, away (कामकाजी घंटों के बाहर) • cooldown • **AI जवाब** (OpenAI / Gemini / Groq / OpenRouter — ग्राहक की अपनी key) • human takeover (फ़ोन से जवाब देने पर bot उस chat में चुप) |
 | **Groups** | Group/community बनाना, members जोड़ना/हटाना/admin बनाना, invite link, name/description/announce-only/lock, join by link, leave • Channel बनाना और पोस्ट करना • Community announcement group में पोस्ट |
@@ -63,7 +63,11 @@ cd wa-gateway
 
 **Carousel:** Android और WhatsApp Web पर पूरा चलता है; iPhone पर cards दिखते हैं पर button tap न हो सके, इसलिए हर card के text में भी लिखा जाता है कि क्या reply करें, और typed जवाब भी उसी option से मिल जाता है। WhatsApp मना करे तो हर card एक सामान्य फ़ोटो मैसेज बनकर जाता है।
 
-**Link preview:** मैसेज में link हो तो gateway उस page का title, description और image लाकर card बनाता है (जैसे फ़ोन से भेजने पर दिखता है)। एक link एक घंटे तक cache रहता है, इसलिए 1,000 लोगों के campaign में page एक बार ही खुलता है। `"preview": false` से बंद।
+**Link preview:** मैसेज में link हो तो gateway उस page का title, description और image लाकर card बनाता है (जैसे फ़ोन से भेजने पर दिखता है)। एक link एक घंटे तक cache रहता है, इसलिए 1,000 लोगों के campaign में page एक बार ही खुलता है। `"preview": false` से बंद। Image बड़ी साफ़ दिखे इसलिए gateway फ़ोन की तरह एक HQ thumbnail WhatsApp पर upload करता है; WebP image वाली sites भी चलती हैं, और जो site सिर्फ़ Facebook crawler को image देती है उसके लिए दूसरी कोशिश होती है।
+
+**Status:** linked device को हर contact के हर device के लिए Status अलग से encrypt करना पड़ता है, और हज़ारों लोगों की list WhatsApp मना कर देता है ("limit exceeded")। इसलिए हर post ज़्यादा से ज़्यादा `STATUS_MAX_RECIPIENTS` लोगों (default 1000) तक जाती है — पहले वे जो आपसे chat करते हैं, फिर saved contacts, फिर फ़ोन की list। Status उन्हीं को दिखता है जिन्होंने आपका नंबर save किया है।
+
+**"Failed" दिखा पर मैसेज चला गया?** अब ऐसा नहीं होगा: मैसेज WhatsApp तक पहुँच जाए पर उसकी पुष्टि देर से आए, तो gateway उसे "sent" मानता है (दोबारा नहीं भेजता, ताकि duplicate न जाए)।
 
 ---
 

@@ -697,8 +697,11 @@ func TestLinkPreview(t *testing.T) {
 		t.Fatalf("preview: %+v", p)
 	}
 	th, _, err := image.Decode(bytes.NewReader(p.Thumb))
-	if err != nil || th.Bounds().Dx() != 300 || th.Bounds().Dy() != 150 || len(p.Thumb) > 60000 {
+	if err != nil || th.Bounds().Dx() != 192 || th.Bounds().Dy() != 96 || len(p.Thumb) > 60000 {
 		t.Fatalf("thumbnail: %v %v %d", err, th.Bounds(), len(p.Thumb))
+	}
+	if p.HQ == nil || p.HQW != 640 || p.HQH != 320 {
+		t.Fatalf("hq thumbnail: %d %dx%d", len(p.HQ), p.HQW, p.HQH)
 	}
 	// Cached: a second call doesn't need the server.
 	site.Close()
@@ -706,9 +709,9 @@ func TestLinkPreview(t *testing.T) {
 		t.Fatal("cache miss")
 	}
 	msg := &waE2E.Message{Conversation: proto.String("Dekho " + site.URL + "/offer")}
-	applyLinkPreview(context.Background(), msg, "Dekho "+site.URL+"/offer", true)
+	applyLinkPreview(context.Background(), nil, msg, "Dekho "+site.URL+"/offer", true)
 	ext := msg.GetExtendedTextMessage()
-	if msg.Conversation != nil || ext.GetTitle() != "Diwali Mega Offer" || ext.GetMatchedText() != site.URL+"/offer" || ext.GetPreviewType() != waE2E.ExtendedTextMessage_IMAGE {
+	if msg.Conversation != nil || ext.GetTitle() != "Diwali Mega Offer" || ext.GetMatchedText() != site.URL+"/offer" || ext.GetPreviewType() != waE2E.ExtendedTextMessage_NONE || ext.GetJPEGThumbnail() == nil {
 		t.Fatalf("applied: %v", ext)
 	}
 	// Private addresses are refused when the guard is on.

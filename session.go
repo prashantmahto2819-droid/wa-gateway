@@ -167,6 +167,7 @@ func (s *Session) ready() (*whatsmeow.Client, error) {
 
 func (s *Session) newClient(dev *whatsmeowDevice) *whatsmeow.Client {
 	cli := whatsmeow.NewClient(dev, s.m.waLog.Sub(s.name))
+	wrapContactStore(cli) // lets the gateway choose each Status post's audience
 	cli.EnableAutoReconnect = true
 	cli.InitialAutoReconnect = true               // keep retrying even if the very first connect fails
 	cli.AutomaticMessageRerequestFromPhone = true // fixes most "waiting for this message"

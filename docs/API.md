@@ -110,17 +110,21 @@ Users see only their own sessions. `name` is generated for users (`u<id>-<slug>`
 
 | Method | Path | Body |
 |---|---|---|
-| POST | `/api/sessions/{name}/send` | `Message + {to}` → `{ok, message:{id,to,timestamp,new_contact}}` |
+| POST | `/api/sessions/{name}/send` | `Message + {to}` → `{ok, message:{id,to,timestamp,new_contact,unconfirmed?}}` — `unconfirmed:true` means the message left the gateway but WhatsApp's acknowledgement was late; it is not resent (no duplicates) |
 | POST | `/api/sessions/{name}/react` | `{chat, id, sender?, emoji}` (`""` removes) |
 | POST | `/api/sessions/{name}/edit` | `{chat, id, text}` |
 | POST | `/api/sessions/{name}/delete` | `{chat, id, sender?}` (delete for everyone) |
-| POST | `/api/sessions/{name}/status` | `{text?, media?, background?:"#25D366"}` → posts a WhatsApp Status (story) |
+| POST | `/api/sessions/{name}/status` | `{text?, media?, background?:"#25D366", status_audience?}` → posts a WhatsApp Status (story); response `message.recipients` = how many people it was shared with |
 | POST | `/api/sessions/{name}/read` · `/typing` · `/check` | as v1 |
-| POST | `/api/sessions/{name}/queue`, `/api/queue` | v1 bulk queue (kept for compatibility); body `{campaign:"label", messages[] | template+recipients[], pool?[], send_after?}` |
+| POST | `/api/sessions/{name}/queue`, `/api/queue` | v1 bulk queue (kept for compatibility); body `{campaign:"label", messages[] | template+recipients[], pool?[], random?:false, send_after?}` (`random:true` = random number from the pool per person) |
 | GET / POST | `/api/queue/campaigns/{label}` · `/api/queue/campaigns/{label}/cancel` | counts / cancel for a v1 queue label |
 | GET | `/api/queue/{id}` | one queued message |
 
 `to` may be a phone, `…@s.whatsapp.net`, group `…@g.us`, channel `…@newsletter`, or `contact:<id>`.
+
+**Message variants:** any Message may carry `variants:[Message,…]` (up to 9). Each recipient gets the main message or one variant at random; `to`, `vars` and `reply_to` always come from the main message. Spintax `{Hi|Hello}` still works inside each version.
+
+**Status audience:** a linked device must encrypt a Status separately for every contact device, and WhatsApp refuses very large lists, so each post goes to at most `STATUS_MAX_RECIPIENTS` people (default 1000, max 5000). `status_audience:{mode, tags?, phones?, limit?}` — `mode:"auto"` (default: people who wrote to this number most recently, then your saved contacts, then the phone's named contacts A–Z), `"tags"` (contacts with any of `tags`) or `"phones"` (exactly `phones`). If the phone's Status privacy is "Only share with…", WhatsApp's own list is used instead.
 `menu` is sent as a numbered list ("1. Price list…"); when the person replies with the number, the `message` webhook includes `menu_choice:{id,text}` and `menu`-trigger auto-replies fire.
 `buttons` and `list` are real interactive messages (native flow / list). A tap arrives as a `message` webhook with `type:"button_reply"|"list_reply"`, `button_id` and `menu_choice:{id,text}`, so the same `menu`-trigger auto-replies work for menus, buttons and lists. Not available for channels or Status.
 
@@ -128,7 +132,7 @@ Users see only their own sessions. `name` is generated for users (`u<id>-<slug>`
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/api/sessions/{name}/groups` | `{ok, groups:[{jid,name,type:"group|community|community_announcements",participants,announce_only,i_am_admin,community?}]}` |
+| GET | `/api/sessions/{name}/groups` | `{ok, groups:[{jid,name,type:"group|community|community_announcements",participants,announce_only,i_am_admin,can_post,community?}]}` — `can_post` is false where only admins may send and you aren't one |
 | POST | `/api/sessions/{name}/groups` | `{name, participants[], community?:false}` |
 | GET | `/api/sessions/{name}/groups/{jid}` | `{ok, group:{jid,name,topic,participants:[{jid,phone,is_admin,is_super_admin}],…}}` |
 | POST | `/api/sessions/{name}/groups/{jid}/participants` | `{action:"add|remove|promote|demote", participants[]}` |
@@ -140,6 +144,7 @@ Users see only their own sessions. `name` is generated for users (`u<id>-<slug>`
 | GET | `/api/sessions/{name}/channels` | `{ok, channels:[{jid,name,role,can_post,subscribers,invite}]}` |
 | POST | `/api/sessions/{name}/channels` | `{name, description}` creates a channel |
 | GET | `/api/sessions/{name}/channels/resolve?invite=` | |
+| GET | `/api/sessions/{name}/wa-contacts` | the linked phone's address book: `{ok, contacts:[{jid,phone,name,push_name,business?,saved}], total, saved}` sorted A–Z (saved name, else the person's own WhatsApp name). Appears a few minutes after linking, once the phone has synced |
 
 ## Contacts
 
@@ -170,13 +175,15 @@ CSV columns: `phone,name,email,tags,notes` + any extra column becomes a custom f
 |---|---|---|
 | GET/POST | `/api/templates` | `{name, message}` |
 | PATCH/DELETE | `/api/templates/{id}` | |
-| GET/POST | `/api/campaigns` | POST `{name, sessions[], message, audience, schedule?, speed?, draft?:false}`; without `schedule.at` it starts now |
+| GET/POST | `/api/campaigns` | POST `{name, sessions[], message, audience, schedule?, speed?, rotation?:"smart|random", draft?:false}`; without `schedule.at` it starts now. `audience.statuses:true` with a repeating `schedule` = scheduled / daily Status posts |
 | GET | `/api/campaigns/{id}` | `{ok, campaign, recent:[{id,to,status,error,sent_at}]}` |
 | PATCH/DELETE | `/api/campaigns/{id}` | edit only while draft/scheduled |
 | POST | `/api/campaigns/{id}/pause` · `/resume` · `/cancel` · `/duplicate` · `/run-now` | |
 | GET | `/api/campaigns/{id}/report.csv` | |
 | GET/POST | `/api/autoreplies` | |
 | PATCH/DELETE | `/api/autoreplies/{id}` | |
+
+Rotation (several `sessions`): `smart` keeps each person on one number (the one they chatted with, else the least busy); `random` picks a random number per person. Groups, channels and Status are always posted by the first number.
 
 Speed: `safe` = delays ×2, `normal` = configured delays, `slow` = ×4. Repeat: `daily`, `weekly` (`days`: 0=Sun…6=Sat), `monthly` (same date), stops after `until`.
 

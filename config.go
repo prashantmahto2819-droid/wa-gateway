@@ -42,6 +42,7 @@ type Config struct {
 	TimelockPause      time.Duration // how long to pause new-contact sending after error 463
 	RetentionDays      int           // delete finished queue rows older than this
 	WebhookIncludeSelf bool          // also forward messages sent from the phone itself
+	StatusMax          int           // most people one Status post is sent to (WhatsApp refuses huge lists)
 
 	// Opt-out: people who write STOP never get queued (campaign) messages again.
 	OptoutKeywords []string
@@ -93,6 +94,7 @@ func loadConfig() (*Config, error) {
 		TimelockPause:      envDur("TIMELOCK_PAUSE", 6*time.Hour),
 		RetentionDays:      envInt("RETENTION_DAYS", 30),
 		WebhookIncludeSelf: envBool("WEBHOOK_INCLUDE_SELF", true),
+		StatusMax:          min(max(envInt("STATUS_MAX_RECIPIENTS", 1000), 10), 5000),
 	}
 	c.OptoutKeywords = envList("OPTOUT_KEYWORDS", "stop,unsubscribe,stop karo,band karo,बंद,बंद करो,रोकें,मत भेजो")
 	c.OptinKeywords = envList("OPTIN_KEYWORDS", "start,subscribe,शुरू")
