@@ -399,6 +399,13 @@ func (s *Session) onEvent(from *whatsmeow.Client, evt any) {
 		if cli := from; cli != nil {
 			// "unavailable" keeps notifications ringing on the owner's phone.
 			_ = cli.SendPresence(ctx, types.PresenceUnavailable)
+			// Load all LID mappings into memory once, so a Status post to
+			// tens of thousands of contacts never builds a giant IN (...) query.
+			if f, ok := cli.Store.LIDs.(interface{ FillCache(context.Context) error }); ok {
+				if err := f.FillCache(ctx); err != nil {
+					s.m.log.Warn("lid cache", "session", s.name, "err", err)
+				}
+			}
 			if cli.Store.PushName != "" {
 				s.mu.Lock()
 				s.pushName = cli.Store.PushName

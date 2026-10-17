@@ -4,6 +4,9 @@ WORKDIR /src
 ARG VERSION=dev
 COPY . .
 # go mod tidy fills go.sum from the official Go proxy (checked against sum.golang.org).
+# Status posts and big groups bind one SQL variable per contact device; the
+# default SQLite limit (32766) breaks phones with 30k+ contacts.
+ENV CGO_CFLAGS="-DSQLITE_MAX_VARIABLE_NUMBER=250000"
 RUN go mod tidy && go vet ./... && go test ./... \
  && CGO_ENABLED=1 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/wa-gateway .
 
