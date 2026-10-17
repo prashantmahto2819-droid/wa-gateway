@@ -5,6 +5,7 @@ export const EVENTS = ['*', 'message', 'message.receipt', 'message.deleted', 'po
 export async function render(ctx) {
   const { root } = ctx;
   const base = location.origin;
+  let hookEvents = EVENTS;
   root.innerHTML = html`<div class="page">
     <div class="page-head"><div><h1>${t('Developer')}</h1><p>${t('Connect your website, CRM or app to Vivid Relay.')}</p></div>
       <div class="page-actions"><a class="btn" href="/docs" target="_blank" rel="noopener">${ic('file', 16)}${t('API docs')}</a><a class="btn" href="/openapi.json" target="_blank" rel="noopener">${ic('code', 16)}openapi.json</a></div></div>
@@ -48,13 +49,14 @@ if (sig !== req.headers['x-signature']) return res.status(401).end();`)}
       <span class="btn-row"><button class="btn sm" data-test="${w.id}">${t('Send test')}</button><button class="btn sm ghost" data-hedit="${w.id}">${t('Edit')}</button><button class="btn-icon danger" data-hdel="${w.id}" aria-label="${t('Delete')}">${ic('trash', 16)}</button></span></li>`)}</ul>`.s
       : empty('link', t('No webhooks'), t('Webhooks post incoming messages, delivery receipts and more to your server in real time.')).s;
     root._hooks = l;
+    if (Array.isArray(j.events) && j.events.length) hookEvents = j.events.filter((e) => e !== 'test');
   }
 
   function hookModal(w) {
     const isNew = !w; w = w || { url: '', events: ['message'] };
     const m = modal({ title: isNew ? t('Add webhook') : t('Edit webhook'), size: 'lg', body: html`<form class="stack">
       <label class="field"><span>${t('URL')}</span><input name="url" type="url" required value="${w.url}" placeholder="https://example.com/vivid-hook" autofocus></label>
-      <fieldset><legend>${t('Events')}</legend><div class="events-grid">${EVENTS.map((e) => html`<label class="check"><input type="checkbox" name="events" data-multi value="${e}" ${(w.events || []).includes(e) ? 'checked' : ''}>${e === '*' ? t('All events') : e}</label>`)}</div></fieldset>
+      <fieldset><legend>${t('Events')}</legend><div class="events-grid">${hookEvents.map((e) => html`<label class="check"><input type="checkbox" name="events" data-multi value="${e}" ${(w.events || []).includes(e) ? 'checked' : ''}>${e === '*' ? t('All events') : e}</label>`)}</div></fieldset>
       <div data-secret></div></form>`,
     footer: html`<button class="btn ghost" data-close>${t('Close')}</button><button class="btn primary" data-ok>${t('Save webhook')}</button>` });
     m.foot.querySelector('[data-ok]').addEventListener('click', async (ev) => {

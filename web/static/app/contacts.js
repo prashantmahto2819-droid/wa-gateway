@@ -157,7 +157,7 @@ export async function render(ctx) {
       res.innerHTML = html`<div class="bar"><span style="width:0%"></span></div>`.s;
       const j = await upload('/api/contacts/import', fd, (p) => { const s = res.querySelector('.bar span'); if (s) s.style.width = Math.round(p * 100) + '%'; });
       b.classList.remove('busy');
-      res.innerHTML = j.ok ? html`<div class="grid g3">${[['Created', j.created, 'ok'], ['Updated', j.updated, 'info'], ['Invalid rows', j.invalid, j.invalid ? 'warn' : 'muted']].map(([l, v, tone]) => html`<div class="note ${tone}" style="display:grid"><small>${t(l)}</small><b style="font-size:22px;font-family:var(--font-display)">${fmtNum(v || 0)}</b></div>`)}</div>`.s : '';
+      res.innerHTML = j.ok ? html`<div class="grid g3">${[['Created', j.created, 'ok'], ['Updated', j.updated, 'info'], ['Invalid rows', j.invalid, j.invalid ? 'warn' : 'muted']].map(([l, v, tone]) => html`<div class="note ${tone}" style="display:grid"><small>${t(l)}</small><b style="font-size:22px;font-family:var(--font-display)">${fmtNum(v || 0)}</b></div>`)}</div>${j.stopped ? html`<div class="note warn mt-s">${ic('alert', 16)}<span>${j.stopped}</span></div>` : ''}`.s : '';
       if (j.ok) { load(); loadTags(); }
     });
   }

@@ -9,7 +9,7 @@ RUN go mod tidy && go vet ./... && go test ./... \
 
 # ---- run ----
 FROM debian:trixie-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata wget \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata wget sqlite3 \
  && rm -rf /var/lib/apt/lists/* \
  && useradd -r -u 10001 -m gw && mkdir -p /data && chown gw:gw /data
 COPY --from=build /out/wa-gateway /usr/local/bin/wa-gateway

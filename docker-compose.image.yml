@@ -1,0 +1,35 @@
+# For self-hosted buyers: runs the published image (no source code needed).
+#   docker login ghcr.io   (with the read token you were given)
+#   docker compose -f docker-compose.image.yml up -d
+services:
+  gateway:
+    image: ghcr.io/prashantmahto2819-droid/vivid-relay:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATA_DIR: /data
+      PORT: "8080"
+      GOMEMLIMIT: 300MiB
+    volumes:
+      - gw_data:/data
+    mem_limit: 512m
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on: [gateway]
+    ports: ["80:80", "443:443"]
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  gw_data:
+  caddy_data:
+  caddy_config:

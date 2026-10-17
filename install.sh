@@ -62,10 +62,11 @@ cat <<EOF
 
 ✅ Vivid Relay चालू है!
 
-  Dashboard : https://${DOMAIN}/
-  API key   : ${API_KEY}
-  Webhook secret (.env में WEBHOOK_SECRET) website में डालें।
+  Website   : https://${DOMAIN}/
+  पहला setup: https://${DOMAIN}/setup   (यहाँ यह master key डालकर अपना owner account बनाएँ)
+  Master key: ${API_KEY}
 
-अगला क़दम: Dashboard खोलें → API key डालें → session "main" जोड़ें → फ़ोन से QR scan करें।
+अगला क़दम: /setup पर account बनाएँ → Dashboard → Numbers → नंबर जोड़ें → फ़ोन से QR scan करें।
+HTTPS certificate बनने में 1–2 मिनट लग सकते हैं।
 Logs: docker compose logs -f gateway     Update: sudo ./update.sh
 EOF

@@ -1,208 +1,136 @@
 # Vivid Relay
 
-_VividBrandify का WhatsApp gateway — repo: wa-gateway_
+_VividBrandify का WhatsApp gateway और marketing panel — repo: wa-gateway_
 
-अपना छोटा, हल्का WhatsApp gateway — एक या ज़्यादा WhatsApp नंबर QR से जोड़िए, website से मैसेज भेजिए, और आने वाले मैसेज सीधे website पर पाइए।
+QR से WhatsApp नंबर जोड़िए। उसके बाद:
+- सुरक्षित रफ़्तार में campaign भेजिए और group, community, channel व Status पर पोस्ट schedule कीजिए।
+- Auto-reply और AI जवाब चलाइए।
+- अपनी हर app (website, BizCRT, n8n…) को API + webhook से जोड़िए।
 
-- **Engine:** [whatsmeow](https://github.com/tulir/whatsmeow) (Go) — Beeper की टीम इसे maintain करती है; WAHA (GOWS), GOWA, WuzAPI, Evolution Go भी इसी पर चलते हैं।
-- **हल्का:** एक ~17 MB की file, लगभग 20–60 MB RAM। फ़ोटो/document कभी download या save नहीं होते, chat history save नहीं होती।
-- **सुरक्षित भेजना:** रोज़ की सीमा, नए नंबर का warm-up, random अंतर, typing, batch break, तय घंटे, नए contacts की अलग सीमा, और WhatsApp की 463 "reach-out timelock" पर अपने-आप रुकना।
-- **Install:** VPS पर एक command (Docker + मुफ़्त HTTPS + crash पर अपने-आप restart)।
+इसे दो तरह से चलाया जा सकता है:
+- **SaaS:** आपके server पर, ग्राहक signup करें और आप licence दें।
+- **Self-hosted:** ग्राहक के अपने server पर, licence key से चालू हो।
 
-> ⚠️ यह WhatsApp की official API नहीं है। अनजान/ठंडे नंबरों पर bulk भेजने से नंबर बैन हो सकता है। सिर्फ़ उन्हीं लोगों को भेजें जिन्होंने अनुमति दी है या आपसे बात की है। OTP जैसे ज़रूरी मैसेज के लिए official Cloud API बेहतर है।
+- **Engine:** [whatsmeow](https://github.com/tulir/whatsmeow) (Go) — वही library जिस पर Beeper, WAHA (GOWS), GOWA, WuzAPI चलते हैं।
+- **हल्का:** एक ~34 MB file, लगभग 30–80 MB RAM। आने वाली फ़ोटो/फ़ाइलें save नहीं होतीं, chat history save नहीं होती।
+- **एक command install:** Docker + मुफ़्त HTTPS (Caddy) + crash पर अपने-आप restart।
+
+> ⚠️ यह WhatsApp की official API नहीं है। अनजान लोगों को bulk भेजने से नंबर बैन हो सकता है — gateway जोखिम घटाता है, ख़त्म नहीं करता। OTP जैसे ज़रूरी मैसेज के लिए official Cloud API बेहतर है।
 
 ---
 
-## 1. Install (Ubuntu/Debian VPS, 1–2 GB RAM)
+## 1. Install (Ubuntu/Debian VPS, 2 vCPU / 2–4 GB RAM सलाह)
 
-1. Domain का A record VPS के IP पर करें (जैसे `wa.example.com`)।
+1. Domain का A record VPS के IP पर करें (Cloudflare में **DNS only / grey cloud**)।
 2. VPS पर:
 
 ```bash
-git clone https://github.com/prashantmahto2819-droid/wa-gateway.git
+apt update && apt install -y git
+git clone https://<GITHUB_TOKEN>@github.com/prashantmahto2819-droid/wa-gateway.git
 cd wa-gateway
-sudo ./install.sh wa.example.com
+./install.sh relay.example.com
 ```
 
-Script Docker लगाता है, कम RAM हो तो swap बनाता है, `.env` में API key बनाता है, और HTTPS के साथ चालू करता है। अंत में Dashboard link और API key दिखेगी।
+3. अंत में दिखा **master key** सँभालकर रखें → `https://relay.example.com/setup` खोलें → master key डालकर अपना **owner account** बनाएँ।
+4. Dashboard → **Numbers → Add number** → फ़ोन में WhatsApp → Linked devices → QR scan करें।
 
-3. `https://wa.example.com/` खोलें → API key डालें → session `main` जोड़ें → फ़ोन में **WhatsApp → Linked devices → Link a device** से QR scan करें (या phone number से pairing code लें)।
-
-**Update:** `sudo ./update.sh` · WhatsApp ने कुछ बदला हो तो `sudo ./update.sh --whatsmeow`
-**Logs:** `docker compose logs -f gateway` · **Settings:** `.env` बदलें, फिर `docker compose up -d`
-
-> फ़ोन को कम-से-कम हर 14 दिन में एक बार इस्तेमाल करें, नहीं तो WhatsApp linked device हटा देता है। एक ही session को दो जगह (दो gateway) मत चलाइए।
-
----
-
-## 2. API
-
-हर request में header: `Authorization: Bearer <API_KEY>` (या `X-API-Key`)। Body JSON है। Base: `https://wa.example.com`
-
-### Session (नंबर)
-
-| Method | Path | काम |
-|---|---|---|
-| GET | `/api/sessions` | सब नंबर + status + आज का हिसाब |
-| POST | `/api/sessions` | `{"name":"main","webhook_url":""}` नया session |
-| GET | `/api/sessions/{name}` | एक session |
-| PATCH | `/api/sessions/{name}` | `{"paused":true/false}` queue रोकें/चालू · `{"webhook_url":"..."}` · `{"proxy":"socks5://user:pass@host:port"}` (`""` = हटाएँ) |
-| POST | `/api/sessions/{name}/proxy-test` | `{"proxy":"..."}` (खाली = saved) → IP, देश, शहर, latency |
-| POST | `/api/sessions/{name}/qr` | QR शुरू करें; जवाब में `qr` और `qr_image` (PNG data URL) |
-| GET | `/api/sessions/{name}/qr` | ताज़ा QR (हर 3 सेकंड पूछें; QR बदलता रहता है) |
-| POST | `/api/sessions/{name}/pair-code` | `{"phone":"9876543210"}` → 8 अक्षर का code |
-| POST | `/api/sessions/{name}/logout` | नंबर हटाएँ |
-| POST | `/api/sessions/{name}/reconnect` | दोबारा जोड़ें |
-| DELETE | `/api/sessions/{name}` | session पूरी तरह हटाएँ |
-
-Status: `outdated` (`./update.sh --whatsmeow` चलाएँ), `new`, `qr`, `qr_expired`, `connecting`, `connected`, `disconnected` (अपने-आप जुड़ेगा), `logged_out` (फिर से QR), `replaced`, `temp_banned`.
-
-### मैसेज भेजना — तुरंत (OTP-जैसे notice, desk reply)
-
-`POST /api/sessions/main/send`
-
-```json
-{ "to": "9876543210", "text": "नमस्ते {{name}}, आपका टोकन {{code}} है", "vars": {"name":"Asha","code":"4821"} }
-```
-
-`to` में चल सकता है: `9876543210` (10 अंक पर `91` अपने-आप), `+91 98765-43210`, group `1203…@g.us`, channel `1203…@newsletter`, community के लिए उसका **announcements** group।
-
-फ़ोटो / video / document / audio:
-
-```json
-{ "to": "1203630xxxx@g.us", "text": "caption", "media": { "type": "image", "url": "https://site.com/a.jpg" } }
-```
-
-`media.base64` भी दे सकते हैं। Document में `filename`। फ़ाइल सिर्फ़ memory में आती है, भेजकर भूल जाते हैं।
-
-Desk reply (quote करके, और पहले मैसेज "read" हो जाता है):
-
-```json
-{ "to": "919876543210", "text": "जी, हो जाएगा", "reply_to": { "id": "3EB0ABC…", "text": "मेरा काम कब होगा?" } }
-```
-
-Group में mention: `"text": "@919876543210 कृपया देखें", "mentions": ["919876543210"]`
-
-जवाब: `{"ok":true,"message":{"id":"3EB0…","to":"919876543210@s.whatsapp.net","timestamp":…,"new_contact":false}}`
-
-### Campaign / bulk — queue से (सुरक्षित रफ़्तार में)
-
-`POST /api/sessions/main/queue`
-
-```json
-{
-  "campaign": "blood-camp-oct",
-  "template": { "text": "{नमस्ते|प्रणाम} {{name}} जी, रविवार को रक्तदान शिविर है। आना हो तो YES लिखें।" },
-  "recipients": [ { "to": "9876543210", "vars": { "name": "राहुल" } }, { "to": "9876543211", "vars": { "name": "सीमा" } } ],
-  "send_after": 0
-}
-```
-
-या `"messages": [ {…}, {…} ]` (हर मैसेज अलग)। `{a|b|c}` में से हर बार एक शब्द random चुना जाता है ताकि सबको एक-सा मैसेज न जाए।
-
-- STOP कर चुके लोग और एक ही campaign में दोहराए गए नंबर अपने-आप हट जाते हैं (जवाब में `skipped_opted_out`, `skipped_duplicates`)।
-- Queue में media सिर्फ़ `url` से (base64 नहीं), ताकि फ़ाइल हर मैसेज के साथ save न हो।
-- जिन लोगों ने हाल में जवाब दिया, उन्हें सबसे पहले भेजा जाता है; अनजान लोगों को सबसे बाद।
-
-**कई नंबरों में बाँटें (number pool):** `POST /api/queue` with `"pool": ["main","second","third"]` (बाकी body वही)। हर व्यक्ति को वही नंबर भेजता है जिससे उसकी पहले बात हुई; नए लोग सबसे कम व्यस्त नंबर को मिलते हैं। कोई नंबर logout/ban हो जाए तो उसके बचे मैसेज अपने-आप बाकी नंबरों पर चले जाते हैं।
-
-| Method | Path | काम |
-|---|---|---|
-| GET | `/api/sessions/{name}/queue` | queued/sent/failed गिनती, आज की सीमा |
-| GET | `/api/campaigns/{campaign}` | एक campaign का हिसाब |
-| POST | `/api/campaigns/{campaign}/cancel` | बाकी queued मैसेज रद्द |
-| GET | `/api/queue/{id}` | एक मैसेज की स्थिति |
-
-### और
-
-| Method | Path | काम |
-|---|---|---|
-| GET | `/api/sessions/{name}/groups` | groups, communities, `community_announcements` group, आप admin हैं या नहीं |
-| GET | `/api/sessions/{name}/channels` | आपके channels; `can_post` = आप owner/admin हैं |
-| GET | `/api/sessions/{name}/channels/resolve?invite=<channel link>` | link से channel JID |
-| POST | `/api/sessions/{name}/read` | `{"chat":"…","ids":["…"],"sender":"…"}` read mark |
-| POST | `/api/sessions/{name}/typing` | `{"to":"…","state":"composing"\|"paused"}` |
-| POST | `/api/sessions/{name}/check` | `{"numbers":["…"]}` (1–50, घंटे की सीमा) — WhatsApp पर है या नहीं |
-| GET | `/api/optouts` | STOP करने वालों की सूची |
-| POST | `/api/optouts` | `{"numbers":["…"]}` हाथ से opt-out जोड़ें |
-| DELETE | `/api/optouts/{phone}` | opt-out हटाएँ |
-| GET | `/health` | बिना key — uptime/monitoring के लिए |
-
-Error जवाब: `{"ok":false,"code":"…","error":"…"}` — मुख्य codes: `not_connected` (503), `not_on_whatsapp` (422), `timelocked` / `daily_limit` / `new_contact_limit` (429), `session_not_found` (404), `bad_request` (400).
-
----
-
-## 3. Webhook (website पर आने वाले events)
-
-`.env` में `WEBHOOK_URL` (या हर session का `webhook_url`)। हर POST:
-
-```json
-{ "event": "message", "session": "main", "timestamp": 1792214875, "data": { … } }
-```
-
-| event | data |
+| काम | Command |
 |---|---|
-| `message` | `id, chat, chat_phone, chat_type (user/group/channel), from, from_phone, push_name, from_me, type, text, caption, mimetype, file_name, file_size, quoted_id, is_edit` |
-| `message.receipt` | `ids, status (delivered/read/played), chat, from` |
-| `message.deleted` | `id, chat` |
-| `queue.status` | `queue_id, campaign, status (sent/failed), wa_id, to, error` |
-| `session.status` | `status, error` |
-| `session.paired` | `jid, lid, business_name` |
-| `session.timelock` | `active, until` — WhatsApp ने नए contacts पर रोक लगाई |
-| `session.health` | `state (ok/slow/paused), fail_rate, reply_rate, reason` |
-| `contact.optout` / `contact.optin` | `phone, keyword` — किसी ने STOP / START लिखा |
+| Update | `sudo ./update.sh` (WhatsApp ने कुछ बदला हो तो `sudo ./update.sh --whatsmeow`) |
+| Backup | `sudo ./backup.sh` → `backups/` में (आख़िरी 14 रखे जाते हैं) |
+| Logs | `docker compose logs -f gateway` |
+| Settings | `.env` बदलें → `docker compose up -d` |
 
-`type`: `text, image, video, audio, voice, document, sticker, location, contact, reaction, poll, button_reply, list_reply`. Media का सिर्फ़ विवरण आता है, file नहीं।
-
-**Signature जाँचें** (headers `X-Timestamp`, `X-Signature: sha256=<hex>`; HMAC-SHA256 of `timestamp + "." + raw body` with `WEBHOOK_SECRET`):
-
-```php
-$raw = file_get_contents('php://input');
-$ts  = $_SERVER['HTTP_X_TIMESTAMP'] ?? '';
-$ok  = hash_equals('sha256=' . hash_hmac('sha256', $ts . '.' . $raw, getenv('WEBHOOK_SECRET')), $_SERVER['HTTP_X_SIGNATURE'] ?? '')
-       && abs(time() - (int)$ts) < 300;
-```
-
-```js
-// Node / Cloudflare Worker
-const mac = await crypto.subtle.importKey('raw', new TextEncoder().encode(SECRET), {name:'HMAC',hash:'SHA-256'}, false, ['sign']);
-const sig = await crypto.subtle.sign('HMAC', mac, new TextEncoder().encode(ts + '.' + rawBody));
-const ok = req.headers.get('x-signature') === 'sha256=' + [...new Uint8Array(sig)].map(b=>b.toString(16).padStart(2,'0')).join('');
-```
-
-Website 2xx न लौटाए तो 3s, 15s, 1m, 5m पर दोबारा भेजा जाता है।
+> फ़ोन को हर 14 दिन में कम-से-कम एक बार इस्तेमाल करें, नहीं तो WhatsApp linked device हटा देता है। एक ही नंबर को दो gateway पर न चलाएँ।
 
 ---
 
-## 4. बैन से बचाव — gateway क्या करता है, आप क्या करें
+## 2. क्या-क्या है
 
-Gateway अपने-आप:
-- नया जुड़ा नंबर पहले दिन 20 मैसेज, फिर रोज़ 1.6x बढ़कर `DAILY_LIMIT` (250) तक।
-- जिन्होंने कभी मैसेज नहीं किया उन्हें रोज़ अधिकतम `NEW_CONTACT_DAILY_LIMIT` (40)।
-- Queue: 30–60 सेकंड random अंतर, हर 20 के बाद 10–15 मिनट break, सिर्फ़ सुबह 9 से रात 9।
-- भेजने से पहले online + typing, reply से पहले read; बाद में offline ताकि फ़ोन पर notification आते रहें।
-- WhatsApp पर न होने वाले नंबर पहले ही छाँट देता है (30 दिन cache)।
-- Error 463/475 या timelock सूचना आते ही नए contacts को भेजना रोकता है; पुराने contacts को भेजना चलता रहता है।
-- **STOP/START:** कोई "STOP", "बंद करो", "band karo" आदि लिखे तो उसे फिर कभी campaign नहीं जाता (desk के जवाब जाते रहते हैं)। उसे पुष्टि का मैसेज भी जाता है।
-- **हर व्यक्ति की सीमा:** एक व्यक्ति को 7 दिन में अधिकतम 3 campaign मैसेज, सभी नंबर मिलाकर (`PER_CONTACT_WEEKLY_LIMIT`)।
-- **सेहत पर नज़र:** पिछले 3 दिन में 25% से ज़्यादा campaign मैसेज fail हों तो queue अपने-आप रुकती है। नए लोगों में से 3% से कम जवाब दें तो रफ़्तार आधी हो जाती है और नए लोगों की सीमा भी आधी। दोनों पर `session.health` webhook आता है; dashboard में "Queue चालू करें" दबाने पर हिसाब नए सिरे से शुरू होता है।
-- **Proxy (हर नंबर का अलग):** Dashboard → Proxy → पहले test होता है (IP, देश दिखेगा), फिर लगता है। Proxy बंद हो तो नंबर server के IP पर नहीं जाता, बस रुककर बताता है। भारतीय residential/mobile और हर नंबर का एक ही (sticky) proxy रखें; rotating या free proxy नहीं। Proxy सिर्फ़ कई नंबर एक server से चलाने में मदद करता है — बैन से बचाव ऊपर वाले नियमों से होता है।
+| हिस्सा | सुविधाएँ |
+|---|---|
+| **Numbers** | QR या pairing code से कई नंबर • हर नंबर का अलग proxy (test के साथ) • call अपने-आप काटना + मैसेज • groups/channels अनदेखा करना • always-online • health (fail rate, reply rate) |
+| **Send** | Text, फ़ोटो, वीडियो, document, audio/voice, **poll** (vote का हिसाब), location, contact card, **numbered menu** (जवाब "2" → option), mention-all, reply/quote, react, edit, delete, **WhatsApp Status** |
+| **Campaigns** | Audience: tags (include/exclude), चुने contacts, पेस्ट किए नंबर, groups, channels, Status • `{{name}}`, `{{city}}` जैसे variables + `{नमस्ते|प्रणाम}` spintax • एक बार / रोज़ / हफ़्ते के दिन / महीने का schedule, "until" तारीख • speed: safe/normal/slow • कई नंबरों में rotation • pause/resume/cancel/duplicate/run-now • CSV report |
+| **Contacts (CRM)** | Tags, custom fields, CSV import (Excel CSV, `;` या tab भी) / export, bulk actions, अपने-आप save (जो मैसेज करे), STOP opt-out सूची, group के members को contacts में save |
+| **Automation** | Auto-reply: welcome (पहला मैसेज), exact keyword, contains, regex, menu choice, कोई भी मैसेज, away (कामकाजी घंटों के बाहर) • cooldown • **AI जवाब** (OpenAI / Gemini / Groq / OpenRouter — ग्राहक की अपनी key) • human takeover (फ़ोन से जवाब देने पर bot उस chat में चुप) |
+| **Groups** | Group/community बनाना, members जोड़ना/हटाना/admin बनाना, invite link, name/description/announce-only/lock, join by link, leave • Channel बनाना और पोस्ट करना • Community announcement group में पोस्ट |
+| **Developer** | REST API (`/openapi.json` — Postman/n8n में import) • हर ग्राहक की अपनी API keys • signed webhooks, event चुनकर • `/docs` पर quickstart |
+| **Accounts & licence** | Signup + free trial, login, plans (नंबर, रोज़/महीने के मैसेज, contacts, storage, features), licence keys (बेचें/redeem/extend/suspend), admin panel (users, plans, keys, settings, contact-form inbox, audit log) |
+| **Website** | Animated home, features, pricing (plans अपने-आप), docs, about, contact form, privacy/terms/refund (वकील से जँचवाएँ) |
 
-आप:
-- सिर्फ़ उन्हें भेजें जिन्होंने अनुमति दी/बात की। लोगों को पहले मैसेज करने दें (`wa.me/91XXXXXXXXXX?text=JOIN` link)।
-- नंबर पर profile photo, नाम, about रखें। नया SIM हो तो कुछ दिन फ़ोन पर सामान्य इस्तेमाल के बाद जोड़ें।
-- मैसेज में जवाब माँगें ("YES लिखें"), "STOP लिखें तो नहीं भेजेंगे" जोड़ें।
-- बड़ी सूचना के लिए Channel / Community announcements बेहतर हैं — एक post सब तक।
+Buttons/list messages unofficial engine पर भरोसेमंद नहीं हैं (कई फ़ोनों पर दिखते नहीं या WhatsApp 405 देता है), इसलिए उनकी जगह **poll** और **numbered menu** हैं — ये हर फ़ोन पर चलते हैं।
 
 ---
 
-## 5. Data और backup
+## 3. अपनी apps जोड़ना
 
-सब कुछ Docker volume `gw_data` में `gateway.db` (SQLite) में है: login keys, queue, contacts सूची। Backup:
+1. Dashboard → **Developer → API key** बनाएँ (`vr_…`)।
+2. हर request में header: `Authorization: Bearer vr_…`
 
 ```bash
-docker compose exec gateway sh -c 'cp /data/gateway.db /data/backup.db' && docker compose cp gateway:/data/backup.db ./backup.db
+# तुरंत मैसेज
+curl -X POST https://relay.example.com/api/sessions/NUMBER_NAME/send \
+  -H "Authorization: Bearer vr_xxx" -H "Content-Type: application/json" \
+  -d '{"to":"9876543210","text":"नमस्ते {{name}}, आपका टोकन {{code}} है","vars":{"name":"Asha","code":"4821"}}'
+
+# Campaign (tag वालों को, कल सुबह 10 बजे, हर सोमवार)
+curl -X POST https://relay.example.com/api/campaigns -H "Authorization: Bearer vr_xxx" -H "Content-Type: application/json" \
+  -d '{"name":"Weekly","sessions":["NUMBER_NAME"],"message":{"text":"Hi {{name}}"},"audience":{"tags":["vip"]},
+       "schedule":{"at":1792300000,"repeat":"weekly","days":[1]},"speed":"safe"}'
 ```
+
+3. **Webhooks:** Developer → Webhook → URL और events चुनें। हर POST पर `X-Signature: sha256=HMAC(secret, X-Timestamp + "." + body)` होता है — जाँचने का PHP/Node कोड `/docs` पर है।
+4. **n8n / Make / Zapier:** `https://relay.example.com/openapi.json` import करें; incoming के लिए उनका webhook URL ऊपर जोड़ें।
+
+पूरा API contract: [`docs/API.md`](docs/API.md)। पुराने v1 endpoints (master key से) भी चलते हैं।
+
+---
+
+## 4. Licence
+
+**आपका main server (SaaS + licence server):**
+- Admin → **Plans:** कीमत, सीमाएँ और features बदलें। शुरू के plans सिर्फ़ उदाहरण हैं।
+- Admin → **Licences → Generate:** key बनाकर ग्राहक को दें, या सीधे किसी user को plan दें।
+- ग्राहक **Licence → Redeem** में key डालता है। Renewal पुराने licence के बाद जुड़ता है।
+- Settings में signup चालू/बंद, trial के दिन और trial plan, कंपनी का नाम/पता/GSTIN और announcement bar सेट करें।
+
+**Self-hosted ग्राहक:**
+1. Admin → Licences → kind **selfhosted** की key बनाएँ। उसमें कितने server चल सकें, वह भी तय करें।
+2. Admin → **Licence server** से public key copy करें।
+3. ग्राहक के server पर `.env` में ये तीन लाइनें जोड़ें:
+   ```
+   LICENCE_SERVER=https://relay.vividbrandify.com
+   LICENCE_KEY=VRS-…
+   LICENCE_PUBLIC_KEY=…
+   ```
+4. ग्राहक को source code नहीं देना हो तो GitHub Actions से बनी image `ghcr.io/prashantmahto2819-droid/vivid-relay` और `docker-compose.image.yml` इस्तेमाल करें।
+
+Self-hosted server हर 12 घंटे में licence server से जाँच करता है। Server तक न पहुँच पाए तो भी 7 दिन तक चलता रहता है। आप key suspend करें तो अगली जाँच पर बंद हो जाता है। Licence token Ed25519 से signed है, इसलिए नकली token नहीं चलेगा।
+
+⚠️ आपकी `licence_ed25519.seed` (gw_data volume में) ही असली चाबी है। `./backup.sh` नियमित चलाएँ। यह फ़ाइल खो गई तो सारे self-hosted ग्राहकों को नया public key देना पड़ेगा।
+
+---
+
+## 5. बैन से बचाव
+
+**Gateway अपने-आप करता है:**
+- **Warm-up:** नया नंबर पहले दिन 20 मैसेज भेजता है, फिर रोज़ 1.6x बढ़ते हुए plan/`DAILY_LIMIT` तक।
+- **नए लोगों की सीमा:** जिन्होंने कभी मैसेज नहीं किया, उन्हें रोज़ अलग सीमा (40)।
+- **एक व्यक्ति की सीमा:** हफ़्ते में अधिकतम 3 campaign मैसेज।
+- **इंसान जैसी रफ़्तार:** मैसेज के बीच 30–60 सेकंड का random अंतर (safe ×2, slow ×4), 20 के बाद लंबा break, सिर्फ़ 9–21 बजे।
+- **इंसान जैसा व्यवहार:** typing दिखाना, reply से पहले read, भेजने के बाद offline।
+- **गलत नंबर पहले ही छाँट लेता है:** WhatsApp पर न होने वाले नंबरों पर भेजता ही नहीं।
+- **रोक लगते ही रुक जाता है:** WhatsApp की 463/475 (नए contacts पर रोक) आते ही नए लोगों को भेजना रोकता है।
+- **सेहत खराब होने पर:** मैसेज ज़्यादा fail हों तो queue रोकता है, जवाब कम आएँ तो धीमा हो जाता है।
+- **STOP / "बंद करो":** लिखने वाले को फिर कभी campaign नहीं भेजता।
+- **जवाब देने वाले पहले:** जिन्होंने जवाब दिया है, उन्हें पहले भेजता है।
+
+**आप करें:**
+- सिर्फ़ अनुमति देने वालों को भेजें।
+- लोगों को पहले मैसेज करने दें — `wa.me` link या QR दें।
+- नंबर पर profile photo और नाम रखें।
+- बड़ी सूचनाओं के लिए Channel या Community का इस्तेमाल करें।
 
 ---
 
@@ -211,6 +139,9 @@ docker compose exec gateway sh -c 'cp /data/gateway.db /data/backup.db' && docke
 ```bash
 go test ./...
 API_KEY=$(openssl rand -hex 24) DATA_DIR=./data go run .
+# http://localhost:8080/setup
 ```
+
+कोड: `session.go` (WhatsApp कनेक्शन), `sender.go` (भेजना + queue), `campaign.go`, `autoreply.go`, `licence.go`, `auth.go`, `contacts.go`, `media.go`, `groups.go`, `admin.go`, `site.go` + `web/` (website और dashboard)।
 
 whatsmeow की license MPL-2.0 है — उसकी files बदले बिना इस्तेमाल करने पर आपके अपने कोड पर कोई शर्त नहीं लगती।

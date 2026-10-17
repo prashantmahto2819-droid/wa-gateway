@@ -1,4 +1,4 @@
-import { api, html, raw, ic, t, fmtNum, meter, pill, sessionStatus, fmtPhone, skel, empty, getSessions, sessionName, pct, getLang } from '/static/app/core.js';
+import { neverExpires, api, html, raw, ic, t, fmtNum, meter, pill, sessionStatus, fmtPhone, skel, empty, getSessions, sessionName, pct, getLang } from '/static/app/core.js';
 
 export async function render(ctx) {
   const { root, me } = ctx;
@@ -37,15 +37,15 @@ export async function render(ctx) {
           <div class="panel-body">
             <div class="row between" style="margin-bottom:14px">
               <div><b style="font-family:var(--font-display);font-size:20px">${plan.name || t('No plan')}</b>
-                <div class="cell-sub">${lic.status === 'active' ? t('Renews or ends on {d}', { d: lic.expires_at ? new Date(lic.expires_at * 1000).toLocaleDateString(getLang() === 'hi' ? 'hi-IN' : 'en-IN', { day: 'numeric', month: 'long' }) : '—' }) : t('Redeem a licence key to activate')}</div></div>
-              ${lic.status === 'active' ? pill(t('{n} days left', { n: lic.days_left ?? 0 }), lic.days_left <= 7 ? 'warn' : 'ok') : pill(t(lic.status === 'expired' ? 'Expired' : 'Not active'), 'bad')}
+                <div class="cell-sub">${neverExpires(lic) ? t('No expiry, no limits') : lic.status === 'active' ? t('Renews or ends on {d}', { d: lic.expires_at ? new Date(lic.expires_at * 1000).toLocaleDateString(getLang() === 'hi' ? 'hi-IN' : 'en-IN', { day: 'numeric', month: 'long' }) : '—' }) : t('Redeem a licence key to activate')}</div></div>
+              ${neverExpires(lic) ? pill(t('Unlimited'), 'ok') : lic.status === 'active' ? pill(t('{n} days left', { n: lic.days_left ?? 0 }), lic.days_left <= 7 ? 'warn' : 'ok') : pill(t(lic.status === 'expired' ? 'Expired' : 'Not active'), 'bad')}
             </div>
-            ${lic.status === 'active' && lic.days_left <= 7 ? html`<div class="note warn mb">${ic('alert', 16)}<span>${t('Your plan ends soon. Renew to keep campaigns running.')}</span></div>` : ''}
+            ${lic.status === 'active' && !neverExpires(lic) && lic.days_left <= 7 ? html`<div class="note warn mb">${ic('alert', 16)}<span>${t('Your plan ends soon. Renew to keep campaigns running.')}</span></div>` : ''}
             <div class="stack" style="gap:14px">
-              ${meter(t('Numbers'), usage.numbers || 0, plan.max_numbers || 0)}
-              ${meter(t('Messages this month'), usage.messages_month || 0, plan.monthly_messages || 0)}
-              ${meter(t('Contacts'), usage.contacts || 0, plan.max_contacts || 0)}
-              ${meter(t('Storage'), usage.storage_mb || 0, plan.storage_mb || 0, ' MB')}
+              ${meter(t('Numbers'), usage.numbers || 0, plan.unlimited ? 0 : plan.max_numbers || 0)}
+              ${meter(t('Messages this month'), usage.messages_month || 0, plan.unlimited ? 0 : plan.monthly_messages || 0)}
+              ${meter(t('Contacts'), usage.contacts || 0, plan.unlimited ? 0 : plan.max_contacts || 0)}
+              ${meter(t('Storage'), usage.storage_mb || 0, plan.unlimited ? 0 : plan.storage_mb || 0, ' MB')}
             </div>
           </div>
         </section>

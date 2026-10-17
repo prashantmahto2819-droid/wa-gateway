@@ -9,7 +9,7 @@ export async function render(ctx) {
     <div class="num-grid" data-list>${[1, 2].map(() => raw('<div class="skel card" style="height:300px"></div>'))}</div>
   </div>`.s;
   let sessions = [];
-  const maxNumbers = me.licence?.plan?.max_numbers || 0;
+  const maxNumbers = me.licence?.plan?.unlimited ? 0 : me.licence?.plan?.max_numbers || 0;
 
   async function load() {
     const j = await api('GET', '/api/sessions');

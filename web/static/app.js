@@ -56,6 +56,7 @@ const ADMIN_NAV = { group: 'Admin', items: [
   ['admin-settings', '/app/admin/settings', 'settings', 'Site settings'],
   ['admin-server', '/app/admin/server', 'globe', 'Licence server'],
 ] };
+const CLIENT_HIDDEN = ['admin-plans', 'admin-licences', 'admin-activations', 'admin-server'];
 const TABS = [['overview', '/app', 'home', 'Home'], ['numbers', '/app/numbers', 'phone', 'Numbers'], ['send', '/app/send', 'send', 'Send'], ['campaigns', '/app/campaigns', 'megaphone', 'Campaigns']];
 
 const state = { me: null, pub: null, cleanups: [], navKey: '', renderId: 0 };
@@ -80,7 +81,8 @@ function navLink([key, href, ico, label]) {
 }
 function renderShell() {
   const me = state.me, u = me.user || {};
-  const groups = [...NAV, ...(u.role === 'superadmin' ? [ADMIN_NAV] : [])];
+  const adminNav = { ...ADMIN_NAV, items: ADMIN_NAV.items.filter(([k]) => me.mode !== 'client' || !CLIENT_HIDDEN.includes(k)) };
+  const groups = [...NAV, ...(u.role === 'superadmin' ? [adminNav] : [])];
   const lic = me.licence || {};
   const initials = (u.name || u.email || '?').split(/\s+/).map((x) => x[0]).slice(0, 2).join('').toUpperCase();
   $('#app').innerHTML = html`
@@ -95,9 +97,9 @@ function renderShell() {
         ${groups.map((g) => html`<div class="nav-group"><p class="nav-title">${t(g.group)}</p>${g.items.map(navLink)}</div>`)}
       </nav>
       <div class="rail-foot">
-        <a class="plan-chip ${lic.status === 'active' ? (lic.days_left <= 7 ? 'warn' : 'ok') : 'bad'}" href="/app/licence" data-link>
+        <a class="plan-chip ${lic.status === 'active' ? (lic.expires_at && !lic.plan?.unlimited && lic.days_left <= 7 ? 'warn' : 'ok') : 'bad'}" href="/app/licence" data-link>
           <span class="dot"></span>
-          <span><b>${lic.plan ? lic.plan.name : t('No plan')}</b><small>${lic.status === 'active' ? t('{n} days left', { n: lic.days_left ?? 0 }) : t(lic.status === 'expired' ? 'Expired' : lic.status === 'suspended' ? 'Suspended' : 'Not active')}</small></span>
+          <span><b>${lic.plan ? lic.plan.name : t('No plan')}</b><small>${lic.status === 'active' ? (lic.plan?.unlimited || !lic.expires_at ? t('Never expires') : t('{n} days left', { n: lic.days_left ?? 0 })) : t(lic.status === 'expired' ? 'Expired' : lic.status === 'suspended' ? 'Suspended' : 'Not active')}</small></span>
         </a>
         <div class="me-row">
           <span class="avatar" aria-hidden="true">${initials}</span>
@@ -143,6 +145,10 @@ function showAnnouncement() {
 function showExpiryBanner() {
   const lic = state.me.licence || {};
   const el = $('#licBanner');
+  if (state.me.licence_error) {
+    el.innerHTML = html`${ic('shield')}<span>${t('Licence check failed')}: ${state.me.licence_error}</span><a class="btn sm" href="/app/licence" data-link>${t('Open licence')}</a>`.s;
+    el.hidden = false; return;
+  }
   if (lic.status !== 'active' && state.me.user.role !== 'superadmin') {
     el.innerHTML = html`${ic('shield')}<span>${lic.status === 'expired' ? t('Your plan has expired. Sending is paused until you renew.') : t('You do not have an active plan yet. Redeem a licence key to start sending.')}</span><a class="btn sm" href="/app/licence" data-link>${t('Open licence')}</a>`.s;
     el.hidden = false;
@@ -182,7 +188,7 @@ async function route() {
     if (m) { match = r; (r.keys || []).forEach((k, i) => { params[k] = m[i + 1]; }); break; }
   }
   const view = $('#view');
-  if (!match || (match.admin && state.me.user.role !== 'superadmin')) {
+  if (!match || (match.admin && state.me.user.role !== 'superadmin') || (state.me.mode === 'client' && CLIENT_HIDDEN.includes(match.nav.replace('$1', params.view || '')))) {
     setActiveNav('');
     view.innerHTML = html`<div class="page"><div class="empty big">${ic('alert', 28)}<h3>${t('Page not found')}</h3><p>${t('This page does not exist or you do not have access.')}</p><a href="/app" data-link class="btn primary">${t('Go to overview')}</a></div></div>`.s;
     return;
@@ -226,7 +232,7 @@ function labelFor(key) {
 export async function refreshMe() {
   const j = await api('GET', '/api/me', undefined, { silent: true });
   if (j.ok) {
-    state.me.user = j.user; state.me.licence = j.licence; state.me.usage = j.usage; state.me.mode = j.mode;
+    state.me.user = j.user; state.me.licence = j.licence; state.me.usage = j.usage; state.me.mode = j.mode; state.me.licence_error = j.licence_error || '';
   }
   return state.me;
 }
@@ -277,7 +283,7 @@ async function boot() {
     }
     return;
   }
-  state.me = { user: me.user, licence: me.licence || {}, usage: me.usage || {}, mode: me.mode };
+  state.me = { user: me.user, licence: me.licence || {}, usage: me.usage || {}, mode: me.mode, licence_error: me.licence_error || '' };
   state.pub = pub.ok ? (pub.settings || pub) : null;
   renderShell();
   route();

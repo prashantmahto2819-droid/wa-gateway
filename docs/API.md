@@ -108,7 +108,9 @@ Users see only their own sessions. `name` is generated for users (`u<id>-<slug>`
 | POST | `/api/sessions/{name}/delete` | `{chat, id, sender?}` (delete for everyone) |
 | POST | `/api/sessions/{name}/status` | `{text?, media?, background?:"#25D366"}` → posts a WhatsApp Status (story) |
 | POST | `/api/sessions/{name}/read` · `/typing` · `/check` | as v1 |
-| POST | `/api/sessions/{name}/queue`, `/api/queue` | v1 bulk queue (kept for compatibility) |
+| POST | `/api/sessions/{name}/queue`, `/api/queue` | v1 bulk queue (kept for compatibility); body `{campaign:"label", messages[] | template+recipients[], pool?[], send_after?}` |
+| GET / POST | `/api/queue/campaigns/{label}` · `/api/queue/campaigns/{label}/cancel` | counts / cancel for a v1 queue label |
+| GET | `/api/queue/{id}` | one queued message |
 
 `to` may be a phone, `…@s.whatsapp.net`, group `…@g.us`, channel `…@newsletter`, or `contact:<id>`.
 `menu` is sent as a numbered list ("1. Price list…"); when the person replies with the number, the `message` webhook includes `menu_choice:{id,text}` and `menu`-trigger auto-replies fire.

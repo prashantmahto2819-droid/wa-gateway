@@ -276,7 +276,7 @@ export function meter(label, used, limit, unit = '') {
   const p = limit ? pct(used, limit) : 0;
   const tone = p >= 90 ? 'bad' : p >= 70 ? 'warn' : 'ok';
   return html`<div class="meter ${tone}">
-    <div class="meter-top"><span>${label}</span><b>${fmtNum(Math.round(used * 10) / 10)}${unit}<small> / ${limit ? fmtNum(limit) + unit : '∞'}</small></b></div>
+    <div class="meter-top"><span>${label}</span><b>${fmtNum(Math.round(used * 10) / 10)}${unit}<small> / ${limit ? fmtNum(limit) + unit : t('Unlimited')}</small></b></div>
     <div class="bar" role="progressbar" aria-label="${label}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${p}"><span style="width:${limit ? p : 0}%"></span></div></div>`;
 }
 export function toggle(name, checked, label, hint = '') {
@@ -409,4 +409,8 @@ export const sessionName = (s) => s.label || s.name;
 export function sessionOptions(list, selected, { all = false, allLabel } = {}) {
   return html`${all ? html`<option value="">${allLabel || t('All my numbers')}</option>` : ''}${list.map((s) => html`<option value="${s.name}" ${s.name === selected ? 'selected' : ''}>${sessionName(s)}${s.phone ? ' · ' + fmtPhone(s.phone) : ''}${s.status !== 'connected' ? ' (' + sessionStatus(s.status).label + ')' : ''}</option>`)}`;
 }
-export const hasFeature = (me, f) => { const p = me?.licence?.plan; if (me?.user?.role === 'superadmin') return true; return !!(p && p.features && p.features[f]); };
+export const hasFeature = (me, f) => { const p = me?.licence?.plan; if (me?.user?.role === 'superadmin' || p?.unlimited) return true; return !!(p && p.features && p.features[f]); };
+/** Plan limit text: 0 (or an unlimited plan) means no limit. */
+export const limitText = (n, plan) => (plan?.unlimited || !n ? t('Unlimited') : fmtNum(n));
+/** True when the licence never expires (owner / unlimited plans). */
+export const neverExpires = (lic) => !!(lic?.plan?.unlimited || (lic?.status === 'active' && !lic?.expires_at));
