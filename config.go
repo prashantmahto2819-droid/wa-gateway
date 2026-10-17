@@ -56,6 +56,15 @@ type Config struct {
 	HealthMinSample int     // judge only after this many campaign sends in the window
 	HealthMaxFail   float64 // pause the queue if more than this share of sends fail
 	HealthMinReply  float64 // slow down if fewer than this share of new contacts reply
+
+	PublicURL string // https://your.domain (used in links and licence check-ins)
+
+	// Self-hosted licence (set all three to run as a licensed install).
+	LicenceServer    string
+	LicenceKey       string
+	LicencePublicKey string
+
+	TakeoverDefault int // minutes auto-replies stay quiet after a human replies from the phone
 }
 
 func loadConfig() (*Config, error) {
@@ -94,6 +103,17 @@ func loadConfig() (*Config, error) {
 	c.HealthMinSample = envInt("HEALTH_MIN_SAMPLE", 30)
 	c.HealthMaxFail = envFloat("HEALTH_MAX_FAIL_RATE", 0.25)
 	c.HealthMinReply = envFloat("HEALTH_MIN_REPLY_RATE", 0.03)
+	c.PublicURL = strings.TrimRight(os.Getenv("PUBLIC_URL"), "/")
+	if c.PublicURL == "" && os.Getenv("DOMAIN") != "" {
+		c.PublicURL = "https://" + os.Getenv("DOMAIN")
+	}
+	c.LicenceServer = strings.TrimRight(os.Getenv("LICENCE_SERVER"), "/")
+	c.LicenceKey = strings.TrimSpace(os.Getenv("LICENCE_KEY"))
+	c.LicencePublicKey = strings.TrimSpace(os.Getenv("LICENCE_PUBLIC_KEY"))
+	c.TakeoverDefault = envInt("TAKEOVER_MINUTES", 30)
+	if c.LicenceServer != "" && (c.LicenceKey == "" || c.LicencePublicKey == "") {
+		return nil, fmt.Errorf("LICENCE_SERVER is set, so LICENCE_KEY and LICENCE_PUBLIC_KEY are required too")
+	}
 	if strings.Contains(c.APIKey, "change-me") {
 		return nil, fmt.Errorf("API_KEY is still the example value; set a long random key (install.sh does this)")
 	}

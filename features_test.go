@@ -16,9 +16,13 @@ func testManager(t *testing.T) *Manager {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	cfg := &Config{DailyLimit: 100, NewContactLimit: 40, RecentReplyDays: 30, HealthMinSample: 10, HealthMaxFail: 0.25, HealthMinReply: 0.05}
+	cfg := &Config{DailyLimit: 100, NewContactLimit: 40, RecentReplyDays: 30, HealthMinSample: 10, HealthMaxFail: 0.25, HealthMinReply: 0.05, DataDir: t.TempDir()}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return &Manager{ctx: context.Background(), cfg: cfg, db: db, log: log, hooks: newWebhooks("", log), sessions: map[string]*Session{}}
+	lic, err := newLicensing(context.Background(), db, cfg, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &Manager{ctx: context.Background(), cfg: cfg, db: db, log: log, hooks: newWebhooks("", log), lic: lic, sessions: map[string]*Session{}, schedWake: make(chan struct{}, 1)}
 }
 
 func addSession(t *testing.T, m *Manager, name, jid string) *Session {

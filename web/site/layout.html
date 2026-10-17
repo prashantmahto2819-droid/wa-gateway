@@ -1,0 +1,102 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}}</title>
+<meta name="description" content="{{.Description}}">
+<meta name="theme-color" content="#0B2B2A">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="{{with .Settings.site_name}}{{.}}{{else}}Vivid Relay{{end}}">
+<meta property="og:title" content="{{.Title}}">
+<meta property="og:description" content="{{.Description}}">
+<meta property="og:image" content="/static/logo.svg">
+<meta name="twitter:card" content="summary">
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,650;12..96,800&family=Instrument+Sans:wght@400;500;600&family=Tiro+Devanagari+Hindi&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="/static/site.css">
+</head>
+<body class="page-{{.Page}}">
+<a class="skip" href="#main">Skip to content</a>
+{{with .Settings.announcement}}<div class="announce" role="note"><p>{{.}}</p></div>{{end}}
+<header class="nav" data-nav>
+  <div class="wrap nav__in">
+    <a class="brand" href="/" aria-label="{{with .Settings.site_name}}{{.}}{{else}}Vivid Relay{{end}} home">
+      <svg class="brand__mark" viewBox="0 0 40 40" aria-hidden="true"><rect x="2" y="2" width="36" height="36" rx="10" fill="var(--deep)"/><path d="M10 12 20 28l7-11" fill="none" stroke="var(--signal)" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="29.6" cy="12" r="3" fill="var(--signal)"/><path d="M32.5 6.8a8 8 0 0 1 2.6 4.6" fill="none" stroke="var(--signal)" stroke-width="1.8" stroke-linecap="round" opacity=".6"/></svg>
+      <span class="brand__name">{{with .Settings.site_name}}{{.}}{{else}}Vivid Relay{{end}}</span>
+    </a>
+    <button class="nav__toggle" type="button" aria-expanded="false" aria-controls="nav-menu" data-nav-toggle><span class="sr">Menu</span><span class="burger" aria-hidden="true"></span></button>
+    <nav class="nav__menu" id="nav-menu" aria-label="Main">
+      <ul class="nav__links">
+        <li><a href="/features"{{if eq .Page "features"}} aria-current="page"{{end}}>Features</a></li>
+        <li><a href="/pricing"{{if eq .Page "pricing"}} aria-current="page"{{end}}>Pricing</a></li>
+        <li><a href="/docs"{{if eq .Page "docs"}} aria-current="page"{{end}}>Docs</a></li>
+        <li><a href="/about"{{if eq .Page "about"}} aria-current="page"{{end}}>About</a></li>
+        <li><a href="/contact"{{if eq .Page "contact"}} aria-current="page"{{end}}>Contact</a></li>
+      </ul>
+      <div class="nav__cta">
+        {{if .LoggedIn}}
+        <a class="btn btn--signal" href="/app">Open dashboard</a>
+        {{else}}
+        <a class="btn btn--ghost" href="/login">Log in</a>
+        {{if .SignupOpen}}<a class="btn btn--signal" href="/signup">Start free trial</a>{{else}}<a class="btn btn--signal" href="/contact">Get access</a>{{end}}
+        {{end}}
+      </div>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+{{template "content" .}}
+</main>
+
+<footer class="foot">
+  <div class="wrap foot__grid">
+    <div class="foot__brand">
+      <a class="brand brand--foot" href="/">
+        <svg class="brand__mark" viewBox="0 0 40 40" aria-hidden="true"><rect x="2" y="2" width="36" height="36" rx="10" fill="var(--signal)"/><path d="M10 12 20 28l7-11" fill="none" stroke="#0B2B2A" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="29.6" cy="12" r="3" fill="#0B2B2A"/></svg>
+        <span class="brand__name">{{with .Settings.site_name}}{{.}}{{else}}Vivid Relay{{end}}</span>
+      </a>
+      <p class="foot__tag">{{with .Settings.tagline}}{{.}}{{else}}Your WhatsApp numbers, one calm panel.{{end}}</p>
+      <p class="hi foot__hi" lang="hi">संदेश, सही समय पर।</p>
+    </div>
+    <div>
+      <h2 class="foot__h">Product</h2>
+      <ul class="foot__list">
+        <li><a href="/features">Features</a></li>
+        <li><a href="/pricing">Pricing</a></li>
+        <li><a href="/docs">API docs</a></li>
+        <li><a href="/openapi.json">OpenAPI spec</a></li>
+      </ul>
+    </div>
+    <div>
+      <h2 class="foot__h">Company</h2>
+      <ul class="foot__list">
+        <li><a href="/about">About</a></li>
+        <li><a href="/contact">Contact</a></li>
+        <li><a href="/privacy">Privacy policy</a></li>
+        <li><a href="/terms">Terms of service</a></li>
+        <li><a href="/refund">Refund policy</a></li>
+      </ul>
+    </div>
+    <div>
+      <h2 class="foot__h">Talk to us</h2>
+      <ul class="foot__list">
+        {{with .Settings.support_email}}<li><a href="mailto:{{.}}">{{.}}</a></li>{{end}}
+        {{with .Settings.support_phone}}<li><a href="tel:{{.}}">{{.}}</a></li>{{end}}
+        {{with .Settings.whatsapp_number}}<li><a href="https://wa.me/{{.}}" rel="noopener">Chat on WhatsApp</a></li>{{end}}
+      </ul>
+      {{with .Settings.address}}<address class="foot__addr">{{.}}</address>{{end}}
+    </div>
+  </div>
+  <div class="wrap foot__base">
+    <p>© {{.Year}} {{with .Settings.company_name}}{{.}}{{else}}VividBrandify{{end}}{{with .Settings.gstin}} · GSTIN {{.}}{{end}}</p>
+    <p class="foot__legal">WhatsApp is a trademark of Meta Platforms, Inc. {{with .Settings.site_name}}{{.}}{{else}}Vivid Relay{{end}} is an independent product and is not affiliated with or endorsed by Meta.</p>
+  </div>
+</footer>
+<script src="/static/site.js" defer></script>
+{{block "scripts" .}}{{end}}
+</body>
+</html>{{end}}

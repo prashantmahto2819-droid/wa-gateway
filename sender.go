@@ -78,6 +78,15 @@ func (s *Session) dailyLimit(pairedAt int64) int {
 	return int(min(l, float64(cfg.DailyLimit)))
 }
 
+// effectiveDailyLimit applies the plan's per-number cap on top of warm-up/DAILY_LIMIT.
+func (s *Session) effectiveDailyLimit(ctx context.Context, pairedAt int64) int {
+	l := s.dailyLimit(pairedAt)
+	if p := s.m.lic.planDailyLimit(ctx, s.owner()); p > 0 && p < l {
+		l = p
+	}
+	return l
+}
+
 func (s *Session) timelocked(r sessionRow) bool {
 	return r.timelockUntil > time.Now().Unix()
 }
@@ -89,7 +98,7 @@ func (s *Session) checkLimits(ctx context.Context, r sessionRow, newContact, slo
 	if err != nil {
 		return err
 	}
-	if sent >= s.dailyLimit(r.pairedAt) {
+	if sent >= s.effectiveDailyLimit(ctx, r.pairedAt) {
 		return errDailyLimit
 	}
 	if newContact {
@@ -182,9 +191,19 @@ func (s *Session) send(ctx context.Context, req *SendRequest, opts sendOpts) (*S
 	if err != nil {
 		return nil, err
 	}
+	owner := s.owner()
+	if err := s.prepare(ctx, owner, req); err != nil {
+		return nil, err
+	}
 	to, newContact, err := s.classify(ctx, cli, req.To)
 	if err != nil {
 		return &SendResult{To: to.String(), NewContact: newContact}, err
+	}
+	isStatus := to == types.StatusBroadcastJID
+	if isStatus {
+		if err := s.m.lic.require(ctx, owner, "status"); err != nil {
+			return nil, err
+		}
 	}
 	r := s.row(ctx)
 	if err := s.checkLimits(ctx, r, newContact, opts.slow); err != nil {
@@ -202,7 +221,15 @@ func (s *Session) send(ctx context.Context, req *SendRequest, opts sendOpts) (*S
 
 	// Upload media before taking the send lock so a slow download
 	// doesn't hold up other messages.
-	msg, handle, err := buildMessage(ctx, cli, to, req, text, s.m.cfg)
+	var mentions []string
+	if req.MentionAll && to.Server == types.GroupServer {
+		if info, err := cli.GetGroupInfo(ctx, to); err == nil {
+			for _, p := range info.Participants {
+				mentions = append(mentions, p.JID.ToNonAD().String())
+			}
+		}
+	}
+	msg, handle, err := buildMessage(ctx, cli, to, req, text, s.m.cfg, mentions)
 	if err != nil {
 		return &SendResult{To: to.String(), NewContact: newContact}, err
 	}
@@ -217,8 +244,8 @@ func (s *Session) send(ctx context.Context, req *SendRequest, opts sendOpts) (*S
 		}
 	}
 
-	isChat := to.Server != types.NewsletterServer
-	typing := s.m.cfg.Typing
+	isChat := to.Server != types.NewsletterServer && !isStatus
+	typing := s.m.cfg.Typing && req.kind() != "poll"
 	if req.Typing != nil {
 		typing = *req.Typing
 	}
@@ -248,6 +275,7 @@ func (s *Session) send(ctx context.Context, req *SendRequest, opts sendOpts) (*S
 	s.lastSend = time.Now()
 	res := &SendResult{To: to.String(), NewContact: newContact}
 	if err != nil {
+		bumpStat(ctx, s.m.db, s.name, owner, "failed")
 		switch serverErrCode(err) {
 		case "463", "475": // reach-out timelock / new-contact cap
 			until := time.Now().Add(s.m.cfg.TimelockPause).Unix()
@@ -258,7 +286,59 @@ func (s *Session) send(ctx context.Context, req *SendRequest, opts sendOpts) (*S
 		return res, err
 	}
 	res.ID, res.Timestamp = resp.ID, resp.Timestamp.Unix()
+	bumpStat(ctx, s.m.db, s.name, owner, "sent")
+	s.afterSend(ctx, to, req, resp.ID)
 	return res, nil
+}
+
+// prepare enforces the licence and resolves library media / contact ids.
+func (s *Session) prepare(ctx context.Context, owner int64, req *SendRequest) error {
+	lic := s.m.lic
+	if err := lic.require(ctx, owner, ""); err != nil {
+		return err
+	}
+	if err := lic.checkLimit(ctx, owner, "messages", 1); err != nil {
+		return err
+	}
+	if req.Poll != nil {
+		if err := lic.require(ctx, owner, "polls"); err != nil {
+			return err
+		}
+	}
+	if id, ok := strings.CutPrefix(req.To, "contact:"); ok {
+		var phone string
+		if s.m.db.QueryRowContext(ctx, `SELECT phone FROM contacts WHERE id=? AND owner_id=?`, id, owner).Scan(&phone) != nil {
+			return errors.New("contact not found")
+		}
+		req.To = phone
+	}
+	if req.Media != nil && req.Media.MediaID > 0 && req.Media.data == nil {
+		data, mime, name, err := s.m.readMedia(ctx, owner, req.Media.MediaID)
+		if err != nil {
+			return err
+		}
+		req.Media.data = data
+		if req.Media.Mimetype == "" {
+			req.Media.Mimetype = mime
+		}
+		if req.Media.FileName == "" {
+			req.Media.FileName = name
+		}
+	}
+	return nil
+}
+
+// afterSend remembers menus and polls so replies and votes can be understood.
+func (s *Session) afterSend(ctx context.Context, to types.JID, req *SendRequest, id types.MessageID) {
+	ctx = context.WithoutCancel(ctx)
+	switch {
+	case req.Menu != nil && to.Server != types.NewsletterServer:
+		_, _ = s.m.db.ExecContext(ctx, `INSERT INTO chat_state(session, chat, menu, menu_at) VALUES(?,?,?,?)
+			ON CONFLICT(session, chat) DO UPDATE SET menu=excluded.menu, menu_at=excluded.menu_at`, s.name, to.String(), jsonText(req.Menu.Options), time.Now().Unix())
+	case req.Poll != nil:
+		_, _ = s.m.db.ExecContext(ctx, `INSERT OR REPLACE INTO polls(session, msg_id, chat, name, options, at) VALUES(?,?,?,?,?,?)`,
+			s.name, id, to.String(), req.Poll.Name, jsonText(req.Poll.Options), time.Now().Unix())
+	}
 }
 
 // goOnline shows the number as online while sending and goes back to
@@ -389,7 +469,7 @@ func (s *Session) queueStep(ctx context.Context, batch *int) time.Duration {
 		return 5 * time.Minute
 	}
 	sent, _ := countSentSince(ctx, s.m.db, s.name, dayStart(now), false)
-	if sent >= s.dailyLimit(r.pairedAt) {
+	if sent >= s.effectiveDailyLimit(ctx, r.pairedAt) {
 		return time.Until(dayStart(now).Add(24*time.Hour)) + time.Minute
 	}
 	h := s.health(ctx, r)
@@ -402,9 +482,10 @@ func (s *Session) queueStep(ctx context.Context, batch *int) time.Duration {
 	var id int64
 	var attempts int
 	var payload, campaign, toAddr string
-	err := s.m.db.QueryRowContext(ctx, `SELECT id, payload, campaign, attempts, to_addr FROM gw_outbox
+	var rowFactor int
+	err := s.m.db.QueryRowContext(ctx, `SELECT id, payload, campaign, attempts, to_addr, speed_factor FROM gw_outbox
 		WHERE session=? AND status='queued' AND not_before<=? ORDER BY priority DESC, id LIMIT 1`, s.name, now.Unix()).
-		Scan(&id, &payload, &campaign, &attempts, &toAddr)
+		Scan(&id, &payload, &campaign, &attempts, &toAddr, &rowFactor)
 	if errors.Is(err, sql.ErrNoRows) {
 		*batch = 0
 		return 5 * time.Minute // woken early by new messages
@@ -467,9 +548,9 @@ func (s *Session) queueStep(ctx context.Context, batch *int) time.Duration {
 			now.Add(3*time.Minute).Unix(), err.Error(), id)
 	}
 
-	factor := time.Duration(1)
+	factor := time.Duration(max(rowFactor, 1)) // campaign speed: safe ×2, slow ×4
 	if slow {
-		factor = 2
+		factor *= 2
 	}
 	*batch++
 	if cfg.BatchSize > 0 && *batch >= cfg.BatchSize {

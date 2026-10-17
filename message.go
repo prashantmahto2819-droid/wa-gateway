@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -32,6 +33,60 @@ type SendRequest struct {
 	ReplyTo  *ReplyRef         `json:"reply_to,omitempty"` // quote an earlier message (support desk)
 	Vars     map[string]string `json:"vars,omitempty"`     // fills {{name}} style placeholders
 	Typing   *bool             `json:"typing,omitempty"`   // override the TYPING setting for this message
+
+	Poll       *PollReq     `json:"poll,omitempty"`
+	Location   *LocationReq `json:"location,omitempty"`
+	Contact    *ContactReq  `json:"contact,omitempty"`
+	Menu       *MenuReq     `json:"menu,omitempty"`
+	MentionAll bool         `json:"mention_all,omitempty"` // groups: notify every member
+	Background string       `json:"background,omitempty"`  // text Status background colour (#RRGGBB)
+}
+
+type PollReq struct {
+	Name     string   `json:"name"`
+	Options  []string `json:"options"`
+	Multiple bool     `json:"multiple"`
+}
+
+type LocationReq struct {
+	Lat     float64 `json:"lat"`
+	Lng     float64 `json:"lng"`
+	Name    string  `json:"name,omitempty"`
+	Address string  `json:"address,omitempty"`
+}
+
+type ContactReq struct {
+	Name  string `json:"name"`
+	Phone string `json:"phone"`
+}
+
+// MenuReq is sent as a numbered text list; the reply number maps back to the option id.
+type MenuReq struct {
+	Title   string    `json:"title,omitempty"`
+	Footer  string    `json:"footer,omitempty"`
+	Options []MenuOpt `json:"options"`
+}
+
+type MenuOpt struct {
+	ID   string `json:"id"`
+	Text string `json:"text"`
+}
+
+// kind is the main content type of the message.
+func (r *SendRequest) kind() string {
+	switch {
+	case r.Media != nil:
+		return "media"
+	case r.Poll != nil:
+		return "poll"
+	case r.Location != nil:
+		return "location"
+	case r.Contact != nil:
+		return "contact"
+	case r.Menu != nil:
+		return "menu"
+	}
+	return "text"
 }
 
 type Media struct {
@@ -40,6 +95,9 @@ type Media struct {
 	Base64   string `json:"base64,omitempty"`   // alternative to url (data: prefix allowed)
 	FileName string `json:"filename,omitempty"` // for documents
 	Mimetype string `json:"mimetype,omitempty"` // detected automatically when empty
+	MediaID  int64  `json:"media_id,omitempty"` // file from the media library
+
+	data []byte // filled internally from the media library
 }
 
 type ReplyRef struct {
@@ -52,8 +110,22 @@ func (r *SendRequest) validate() error {
 	if strings.TrimSpace(r.To) == "" {
 		return errors.New("'to' is required")
 	}
-	if r.Media == nil && strings.TrimSpace(r.Text) == "" {
-		return errors.New("'text' or 'media' is required")
+	return r.validateContent()
+}
+
+// validateContent checks the message itself (used without "to" by templates/campaigns).
+func (r *SendRequest) validateContent() error {
+	kinds := 0
+	for _, set := range []bool{r.Media != nil, r.Poll != nil, r.Location != nil, r.Contact != nil, r.Menu != nil} {
+		if set {
+			kinds++
+		}
+	}
+	if kinds > 1 {
+		return errors.New("send only one of media, poll, location, contact or menu per message")
+	}
+	if kinds == 0 && strings.TrimSpace(r.Text) == "" {
+		return errors.New("'text' is required")
 	}
 	if len(r.Text) > 60000 {
 		return errors.New("text is too long")
@@ -64,8 +136,46 @@ func (r *SendRequest) validate() error {
 		default:
 			return errors.New("media.type must be image, video, document or audio")
 		}
-		if (r.Media.URL == "") == (r.Media.Base64 == "") {
-			return errors.New("give exactly one of media.url or media.base64")
+		n := 0
+		for _, set := range []bool{r.Media.URL != "", r.Media.Base64 != "", r.Media.MediaID > 0} {
+			if set {
+				n++
+			}
+		}
+		if n != 1 {
+			return errors.New("give exactly one of media.url, media.base64 or media.media_id")
+		}
+	}
+	if r.Poll != nil {
+		if strings.TrimSpace(r.Poll.Name) == "" || len(r.Poll.Options) < 2 || len(r.Poll.Options) > 12 {
+			return errors.New("a poll needs a question and 2-12 options")
+		}
+		seen := map[string]bool{}
+		for _, o := range r.Poll.Options {
+			o = strings.TrimSpace(o)
+			if o == "" || seen[o] {
+				return errors.New("poll options must be non-empty and different")
+			}
+			seen[o] = true
+		}
+	}
+	if r.Location != nil && (r.Location.Lat < -90 || r.Location.Lat > 90 || r.Location.Lng < -180 || r.Location.Lng > 180) {
+		return errors.New("location lat/lng out of range")
+	}
+	if r.Contact != nil && (strings.TrimSpace(r.Contact.Name) == "" || len(nonDigits.ReplaceAllString(r.Contact.Phone, "")) < 8) {
+		return errors.New("contact card needs a name and phone")
+	}
+	if r.Menu != nil {
+		if len(r.Menu.Options) < 1 || len(r.Menu.Options) > 20 {
+			return errors.New("a menu needs 1-20 options")
+		}
+		for i := range r.Menu.Options {
+			if strings.TrimSpace(r.Menu.Options[i].Text) == "" {
+				return errors.New("menu options need text")
+			}
+			if r.Menu.Options[i].ID == "" {
+				r.Menu.Options[i].ID = strconv.Itoa(i + 1)
+			}
 		}
 	}
 	return nil
@@ -78,6 +188,9 @@ func parseTarget(s, countryCode string) (types.JID, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return types.JID{}, errors.New("empty recipient")
+	}
+	if s == "status" || s == "status@broadcast" {
+		return types.StatusBroadcastJID, nil
 	}
 	if strings.Contains(s, "@") {
 		jid, err := types.ParseJID(s)
@@ -148,7 +261,9 @@ func renderText(t string, vars map[string]string, rnd *rand.Rand) string {
 // ---------- media loading (kept only in memory) ----------
 
 func loadMedia(ctx context.Context, m *Media, maxBytes int64, allowPrivate bool) (data []byte, mimetype, filename string, err error) {
-	if m.Base64 != "" {
+	if m.data != nil {
+		data = m.data
+	} else if m.Base64 != "" {
 		raw := m.Base64
 		if i := strings.Index(raw, ","); strings.HasPrefix(raw, "data:") && i > 0 {
 			if mimetype == "" {
@@ -282,12 +397,51 @@ func buildContext(req *SendRequest, chat types.JID, cc string) (*waE2E.ContextIn
 // buildMessage prepares the protobuf message, uploading media when needed.
 // For channels the upload is unencrypted and the returned handle must be
 // passed to SendMessage.
-func buildMessage(ctx context.Context, cli *whatsmeow.Client, to types.JID, req *SendRequest, text string, cfg *Config) (*waE2E.Message, string, error) {
+func buildMessage(ctx context.Context, cli *whatsmeow.Client, to types.JID, req *SendRequest, text string, cfg *Config, extraMentions []string) (*waE2E.Message, string, error) {
 	ci, err := buildContext(req, to, cfg.DefaultCountryCode)
 	if err != nil {
 		return nil, "", err
 	}
+	if len(extraMentions) > 0 {
+		if ci == nil {
+			ci = &waE2E.ContextInfo{}
+		}
+		ci.MentionedJID = append(ci.MentionedJID, extraMentions...)
+	}
+	switch req.kind() {
+	case "poll":
+		opts := make([]string, len(req.Poll.Options))
+		for i, o := range req.Poll.Options {
+			opts[i] = strings.TrimSpace(o)
+		}
+		selectable := 1
+		if req.Poll.Multiple {
+			selectable = 0 // 0 = any number of options
+		}
+		msg := cli.BuildPollCreation(strings.TrimSpace(req.Poll.Name), opts, selectable)
+		msg.PollCreationMessage.ContextInfo = ci
+		return msg, "", nil
+	case "location":
+		return &waE2E.Message{LocationMessage: &waE2E.LocationMessage{
+			DegreesLatitude: proto.Float64(req.Location.Lat), DegreesLongitude: proto.Float64(req.Location.Lng),
+			Name: proto.String(req.Location.Name), Address: proto.String(req.Location.Address), ContextInfo: ci}}, "", nil
+	case "contact":
+		phone := nonDigits.ReplaceAllString(req.Contact.Phone, "")
+		if len(phone) == 10 {
+			phone = cfg.DefaultCountryCode + phone
+		}
+		name := strings.NewReplacer("\n", " ", "\r", " ", ";", " ").Replace(req.Contact.Name)
+		vcard := fmt.Sprintf("BEGIN:VCARD\nVERSION:3.0\nFN:%s\nTEL;type=CELL;type=VOICE;waid=%s:+%s\nEND:VCARD", name, phone, phone)
+		return &waE2E.Message{ContactMessage: &waE2E.ContactMessage{DisplayName: proto.String(name), Vcard: proto.String(vcard), ContextInfo: ci}}, "", nil
+	case "menu":
+		text = renderMenu(req.Menu, text)
+	}
 	if req.Media == nil {
+		if to == types.StatusBroadcastJID {
+			return &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String(text),
+				BackgroundArgb: proto.Uint32(argb(req.Background)), TextArgb: proto.Uint32(0xFFFFFFFF),
+				Font: waE2E.ExtendedTextMessage_SYSTEM.Enum()}}, "", nil
+		}
 		if ci == nil {
 			return &waE2E.Message{Conversation: proto.String(text)}, "", nil
 		}
@@ -378,4 +532,34 @@ func publicIP(ip net.IP) bool {
 		}
 	}
 	return true
+}
+
+// renderMenu turns a menu into a numbered list people answer by number.
+func renderMenu(m *MenuReq, intro string) string {
+	var b strings.Builder
+	if t := strings.TrimSpace(m.Title); t != "" {
+		b.WriteString("*" + t + "*\n")
+	}
+	if intro = strings.TrimSpace(intro); intro != "" {
+		b.WriteString(intro + "\n")
+	}
+	b.WriteString("\n")
+	for i, o := range m.Options {
+		fmt.Fprintf(&b, "%d. %s\n", i+1, strings.TrimSpace(o.Text))
+	}
+	footer := strings.TrimSpace(m.Footer)
+	if footer == "" {
+		footer = "Reply with the number of your choice."
+	}
+	b.WriteString("\n_" + footer + "_")
+	return b.String()
+}
+
+// argb converts "#RRGGBB" to WhatsApp's ARGB colour (default: dark teal).
+func argb(hex string) uint32 {
+	hex = strings.TrimPrefix(strings.TrimSpace(hex), "#")
+	if v, err := strconv.ParseUint(hex, 16, 32); err == nil && len(hex) == 6 {
+		return 0xFF000000 | uint32(v)
+	}
+	return 0xFF0B4F4A
 }

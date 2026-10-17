@@ -1,0 +1,31 @@
+{{define "content"}}
+<div class="auth">
+  <section class="auth__main" aria-labelledby="login-title">
+    <div class="auth__box">
+      {{if .NeedsSetup}}<p class="auth__setup">This installation has no admin yet. <a href="/setup">Finish setup</a> to create the first account.</p>{{end}}
+      <h1 id="login-title">Welcome back</h1>
+      <p class="lede">Log in to manage your numbers, campaigns and contacts.</p>
+      <form class="form" data-api="/auth/login" data-redirect="/app" novalidate>
+        <div class="field"><label for="l-email">Email</label><input id="l-email" name="email" type="email" autocomplete="email" required autofocus></div>
+        <div class="field"><label for="l-pass">Password</label><div class="pw"><input id="l-pass" name="password" type="password" autocomplete="current-password" required minlength="8"><button type="button" data-pw-toggle aria-pressed="false" aria-controls="l-pass">Show</button></div></div>
+        <button class="btn btn--deep btn--lg btn--block" type="submit" data-busy="Logging in…">Log in</button>
+        <p class="form__msg" role="alert" aria-live="assertive"></p>
+      </form>
+      <p class="auth__alt">Forgot your password? <a href="/contact">Contact support</a> and we’ll reset it.</p>
+      {{if .SignupOpen}}<p class="auth__alt">New here? <a href="/signup">Start a free trial</a></p>{{end}}
+    </div>
+  </section>
+  <aside class="auth__side" aria-hidden="true">
+    <div class="hero__mesh"></div>
+    <div>
+      <p class="hi" lang="hi">संदेश, सही समय पर।</p>
+      <h2>Your customers are waiting to hear from you</h2>
+    </div>
+    <div class="auth__feed">
+      <div class="bub bub--out">Namaste Asha ji, your order #2041 is out for delivery today.<div class="bub__meta">11:02 <svg class="ticks is-read" viewBox="0 0 16 10"><path d="M1 5.5l3 3L10 1.5M6.5 8.5l1 0L15 1.5"/></svg></div></div>
+      <div class="bub bub--in">Thank you! 🙏<div class="bub__meta">11:05</div></div>
+      <div class="bub bub--out">Reply STOP any time to stop updates.<div class="bub__meta">11:05 <svg class="ticks is-read" viewBox="0 0 16 10"><path d="M1 5.5l3 3L10 1.5M6.5 8.5l1 0L15 1.5"/></svg></div></div>
+    </div>
+  </aside>
+</div>
+{{end}}

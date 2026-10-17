@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand/v2"
@@ -9,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.mau.fi/whatsmeow"
@@ -41,8 +43,9 @@ var (
 )
 
 type Session struct {
-	name string
-	m    *Manager
+	name    string
+	m       *Manager
+	ownerID atomic.Int64
 
 	mu         sync.Mutex
 	client     *whatsmeow.Client
@@ -119,16 +122,36 @@ func (s *Session) poke() {
 }
 
 func (s *Session) hook(event string, data any) {
-	s.m.hooks.send(s.webhookURL(), s.name, event, data)
+	s.m.dispatch(s, event, data)
 }
 
-func (s *Session) webhookURL() string {
-	var u string
-	_ = s.m.db.QueryRow(`SELECT webhook_url FROM gw_sessions WHERE name=?`, s.name).Scan(&u)
-	if u != "" {
-		return u
+// owner is the user who owns this number (sessions from before accounts belong to the first admin).
+func (s *Session) owner() int64 {
+	if id := s.ownerID.Load(); id > 0 {
+		return id
 	}
-	return s.m.cfg.WebhookURL
+	return firstAdminID(s.m.ctx, s.m.db)
+}
+
+// SessionSettings are per-number options editable in the dashboard.
+type SessionSettings struct {
+	RejectCalls      bool   `json:"reject_calls"`
+	RejectMessage    string `json:"reject_message"`
+	IgnoreGroups     bool   `json:"ignore_groups"`
+	IgnoreChannels   bool   `json:"ignore_channels"`
+	AutoSaveContacts bool   `json:"auto_save_contacts"`
+	AlwaysOnline     bool   `json:"always_online"`
+	TakeoverMinutes  int    `json:"takeover_minutes"`
+}
+
+func (s *Session) settings(ctx context.Context) SessionSettings {
+	st := SessionSettings{IgnoreChannels: true, AutoSaveContacts: true, TakeoverMinutes: s.m.cfg.TakeoverDefault,
+		RejectMessage: "Sorry, calls are not answered on this number. Please send a message."}
+	var raw string
+	if s.m.db.QueryRowContext(ctx, `SELECT settings FROM gw_sessions WHERE name=?`, s.name).Scan(&raw) == nil && raw != "" {
+		_ = json.Unmarshal([]byte(raw), &st)
+	}
+	return st
 }
 
 // ready returns the client only if it is linked and connected.
@@ -426,6 +449,8 @@ func (s *Session) onEvent(from *whatsmeow.Client, evt any) {
 		s.onMessage(ctx, e)
 	case *events.Receipt:
 		s.onReceipt(e)
+	case *events.CallOffer:
+		go s.onCall(e)
 	}
 }
 
@@ -494,6 +519,11 @@ func (s *Session) onMessage(ctx context.Context, e *events.Message) {
 	s.mu.Lock()
 	cli := s.client
 	s.mu.Unlock()
+	st := s.settings(ctx)
+	isChannel := info.Chat.Server == types.NewsletterServer
+	if (info.IsGroup && st.IgnoreGroups) || (isChannel && st.IgnoreChannels) {
+		return
+	}
 
 	sender := s.resolvePN(ctx, cli, info.Sender, info.SenderAlt)
 	chat := info.Chat.ToNonAD()
@@ -505,10 +535,15 @@ func (s *Session) onMessage(ctx context.Context, e *events.Message) {
 		}
 		chatPN = s.resolvePN(ctx, cli, chat, alt)
 	}
+	isDM := !info.IsGroup && !isChannel
+	fresh := time.Since(info.Timestamp) < 10*time.Minute // not an old backlog message
+
+	// First message ever from this person? (checked before we remember them)
+	firstTime := isDM && !info.IsFromMe && !isKnownContact(ctx, s.m.db, s.name, chat.String(), chatPN.String())
 
 	// Anyone we have a 1:1 conversation with counts as a known contact
 	// (sending to them is low-risk and allowed even during a timelock).
-	if !info.IsGroup && chat.Server != types.NewsletterServer {
+	if isDM {
 		rememberContact(ctx, s.m.db, s.name, chat.String())
 		if chatPN != chat {
 			rememberContact(ctx, s.m.db, s.name, chatPN.String())
@@ -516,6 +551,26 @@ func (s *Session) onMessage(ctx context.Context, e *events.Message) {
 		if alt := info.SenderAlt; !info.IsFromMe && !alt.IsEmpty() {
 			rememberContact(ctx, s.m.db, s.name, alt.ToNonAD().String())
 		}
+	}
+	if isDM && info.IsFromMe && fresh {
+		// A person answered from the phone: keep the bot quiet in this chat for a while.
+		if st.TakeoverMinutes > 0 {
+			until := time.Now().Add(time.Duration(st.TakeoverMinutes) * time.Minute).Unix()
+			_, _ = s.m.db.ExecContext(ctx, `INSERT INTO chat_state(session, chat, human_until) VALUES(?,?,?)
+				ON CONFLICT(session, chat) DO UPDATE SET human_until=excluded.human_until`, s.name, chatPN.String(), until)
+		}
+	}
+	if !info.IsFromMe {
+		bumpStat(ctx, s.m.db, s.name, s.owner(), "received")
+		if isDM && st.AutoSaveContacts {
+			s.autoSaveContact(ctx, phoneOf(chatPN), info.PushName)
+		}
+	}
+
+	// Poll votes arrive encrypted; decode them into option names.
+	if e.Message.GetPollUpdateMessage() != nil {
+		s.onPollVote(ctx, cli, e, sender)
+		return
 	}
 
 	if info.IsFromMe && !s.m.cfg.WebhookIncludeSelf {
@@ -525,14 +580,23 @@ func (s *Session) onMessage(ctx context.Context, e *events.Message) {
 	if content == nil {
 		return
 	}
-	if !info.IsFromMe && !info.IsGroup && chat.Server != types.NewsletterServer && content["type"] == "text" {
-		if t, _ := content["text"].(string); t != "" {
-			s.handleKeyword(ctx, chatPN, t)
-		}
-	}
 	if content["type"] == "revoke" {
 		s.hook("message.deleted", map[string]any{"id": content["id"], "chat": chat.String(), "chat_phone": phoneOf(chatPN), "from_me": info.IsFromMe})
 		return
+	}
+	text, _ := content["text"].(string)
+	if text == "" {
+		text, _ = content["caption"].(string)
+	}
+	var choice *MenuOpt
+	if isDM && !info.IsFromMe {
+		if content["type"] == "text" && text != "" {
+			s.handleKeyword(ctx, chatPN, text)
+		}
+		choice = s.menuChoice(ctx, chatPN, text)
+		if choice != nil {
+			content["menu_choice"] = choice
+		}
 	}
 	data := map[string]any{
 		"id":         info.ID,
@@ -550,6 +614,10 @@ func (s *Session) onMessage(ctx context.Context, e *events.Message) {
 		data[k] = v
 	}
 	s.hook("message", data)
+
+	if !info.IsFromMe && fresh && !e.IsEdit && content["type"] != "reaction" {
+		go s.runAutoReplies(chatPN, info.IsGroup, firstTime, text, choice, info.PushName, info.ID, sender)
+	}
 }
 
 func (s *Session) onReceipt(e *events.Receipt) {

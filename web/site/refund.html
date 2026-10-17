@@ -1,0 +1,32 @@
+{{define "content"}}
+<!-- TEMPLATE: This refund policy is a plain-language starting point. Have it reviewed by a qualified lawyer before relying on it. -->
+<header class="phead"><div class="wrap"><h1>Refund policy</h1><p class="lede">Simple and fair: try it, and if it isn’t right for you, ask within 7 days.</p></div></header>
+<section class="section"><div class="wrap prose">
+<h2>1. Free trial first</h2>
+<p>Where a free trial is available, please use it to check that Vivid Relay works for your numbers and workflow before paying.</p>
+
+<h2>2. 7-day refund on your first purchase</h2>
+<p>If you are not satisfied with your first paid plan, write to {{with .Settings.support_email}}<a href="mailto:{{.}}">{{.}}</a>{{else}}<a href="/contact">our contact page</a>{{end}} within 7 days of payment and {{with .Settings.company_name}}{{.}}{{else}}VividBrandify{{end}} will refund the full amount, including GST, to the original payment method.</p>
+
+<h2>3. When refunds don’t apply</h2>
+<ul>
+<li>Renewals and second or later purchases, plan upgrades after the first 7 days, and add-ons.</li>
+<li>Accounts suspended for breaking our <a href="/terms">terms of service</a>, including spam or messaging people without consent.</li>
+<li>Restrictions or bans placed on your number by WhatsApp. These are outside our control and are explained before you buy.</li>
+<li>Repeated refund requests or other patterns that suggest abuse of this policy.</li>
+<li>Self-hosted licences once the key has been activated on a server, unless the software cannot be installed and we are unable to fix it.</li>
+</ul>
+
+<h2>4. Cancelling</h2>
+<p>You can stop renewing at any time. Your plan stays active until the end of the period you have paid for; we don’t refund partial periods.</p>
+
+<h2>5. How long it takes</h2>
+<p>Approved refunds are started within 5 working days. Your bank or UPI app may take another 5–10 working days to show the credit.</p>
+
+<h2>6. Service outages</h2>
+<p>If the hosted service is unavailable for an extended time because of a fault on our side, contact us and we will extend your plan fairly.</p>
+
+<h2>7. Contact</h2>
+<p>Refund requests and questions: {{with .Settings.support_email}}<a href="mailto:{{.}}">{{.}}</a>{{else}}<a href="/contact">our contact page</a>{{end}}{{with .Settings.support_phone}} or call {{.}}{{end}}.</p>
+</div></section>
+{{end}}

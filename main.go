@@ -45,10 +45,18 @@ func main() {
 	defer stop()
 
 	hooks := newWebhooks(cfg.WebhookSecret, log)
+	hooks.db = db
 	hooks.start(ctx, 4)
 
+	lic, err := newLicensing(ctx, db, cfg, log)
+	if err != nil {
+		log.Error("licence setup", "err", err)
+		os.Exit(1)
+	}
+	go lic.runClient(ctx)
+
 	waLevel := strings.ToUpper(env("WA_LOG_LEVEL", "WARN"))
-	m, err := newManager(ctx, cfg, db, hooks, log, waLevel)
+	m, err := newManager(ctx, cfg, db, hooks, lic, log, waLevel)
 	if err != nil {
 		log.Error("startup error", "err", err)
 		os.Exit(1)
@@ -58,7 +66,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	api := &API{m: m, cfg: cfg, started: time.Now()}
+	api := &API{m: m, cfg: cfg, lic: lic, started: time.Now()}
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           api.routes(),

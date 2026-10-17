@@ -111,7 +111,7 @@ func (m *Manager) poolCandidates(ctx context.Context, pool []string) []*poolCand
 		}
 		var queued int
 		_ = m.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM gw_outbox WHERE session=? AND status='queued'`, name).Scan(&queued)
-		limit := max(s.dailyLimit(r.pairedAt), 1)
+		limit := max(s.effectiveDailyLimit(ctx, r.pairedAt), 1)
 		out = append(out, &poolCandidate{name: name, limit: limit, load: float64(queued) / float64(limit)})
 	}
 	return out

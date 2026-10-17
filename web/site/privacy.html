@@ -1,0 +1,66 @@
+{{define "content"}}
+<!-- TEMPLATE: This privacy policy is a plain-language starting point for an Indian SaaS. Have it reviewed by a qualified lawyer before relying on it. -->
+<header class="phead"><div class="wrap"><h1>Privacy policy</h1><p class="lede">How {{with .Settings.company_name}}{{.}}{{else}}VividBrandify{{end}} collects, uses and protects personal data when you use Vivid Relay.</p></div></header>
+<section class="section"><div class="wrap prose">
+<p class="updated">Applies to the Vivid Relay website, dashboard and API.</p>
+<div class="callout">Short version: we collect what we need to run your account, we don’t sell your data, we don’t keep your WhatsApp chat history, and you can ask us to delete your data at any time.</div>
+
+<h2>1. Who we are</h2>
+<p>Vivid Relay is operated by {{with .Settings.company_name}}{{.}}{{else}}VividBrandify{{end}} ("we", "us"). For privacy questions or requests, contact {{with .Settings.support_email}}<a href="mailto:{{.}}">{{.}}</a>{{else}}<a href="/contact">our contact page</a>{{end}}.{{with .Settings.address}} Our postal address is {{.}}.{{end}}</p>
+
+<h2>2. Two kinds of data</h2>
+<p><strong>Your account data.</strong> We are the data fiduciary for information about you as our customer: your name, email, phone number, billing details and how you use the service.</p>
+<p><strong>Your customers’ data.</strong> When you upload contacts or send messages through Vivid Relay, you decide what data is processed and why. For that data you are the data fiduciary and we act as your data processor, handling it only to provide the service to you.</p>
+
+<h2>3. What we collect</h2>
+<ul>
+<li>Account details: name, email, phone, password (stored only as a secure hash).</li>
+<li>Billing details: plan, invoices, GST details you provide. Card or UPI details are handled by our payment provider, not stored by us.</li>
+<li>Service data: linked WhatsApp numbers, contacts and tags you add, message templates, campaigns, queue status and delivery reports, media you upload to the library, API keys and webhook settings.</li>
+<li>Technical data: IP address, browser type, log entries and security events, kept to protect the service.</li>
+<li>Messages you send us through the contact form, email or WhatsApp.</li>
+</ul>
+
+<h2>4. What we don’t collect</h2>
+<ul>
+<li>We do not store WhatsApp chat history. Incoming messages are passed to your webhook or dashboard and are not archived by the engine.</li>
+<li>We do not download photos, videos or documents your contacts send you; only a description (type, size, name) is passed on.</li>
+<li>We do not sell personal data or use your customers’ data for our own marketing.</li>
+</ul>
+
+<h2>5. Why we use it</h2>
+<ul>
+<li>To provide, secure and support the service you signed up for.</li>
+<li>To bill you and meet tax and accounting obligations.</li>
+<li>To send service notices, such as security alerts, plan expiry or important changes.</li>
+<li>To prevent abuse, including spam and misuse that could harm WhatsApp users.</li>
+</ul>
+<p>We rely on your consent and on the legitimate uses permitted under the Digital Personal Data Protection Act, 2023 (DPDP Act), such as performing our contract with you and meeting legal obligations.</p>
+
+<h2>6. Sharing</h2>
+<p>We share data only with service providers who help us run Vivid Relay (for example hosting, email and payment providers), under confidentiality obligations, or when required by law. Messages you send are, by their nature, delivered through WhatsApp, which is operated by Meta Platforms, Inc. under its own privacy policy.</p>
+
+<h2>7. Storage, security and retention</h2>
+<p>Data is stored on servers we control or rent, protected by access controls, encryption in transit (HTTPS) and hashed passwords. We keep account data while your account is active and for a limited period afterwards to meet legal and tax requirements. Queue and delivery records are kept for operational reporting and then deleted. If you use a self-hosted licence, your service data stays on your own server and we only receive licence activation details (licence key, domain, version and IP).</p>
+
+<h2>8. Your rights</h2>
+<p>Under the DPDP Act you may ask to access, correct or erase your personal data, withdraw consent, and nominate someone to exercise your rights. Write to {{with .Settings.support_email}}<a href="mailto:{{.}}">{{.}}</a>{{else}}<a href="/contact">our contact page</a>{{end}}. If you are a contact of one of our customers, please contact that business first; we will help them respond.</p>
+
+<h2>9. Your responsibilities as a sender</h2>
+<p>If you upload contacts or send messages, you confirm that you have a lawful basis and the consent needed to message those people, that you honour opt-out requests, and that you follow WhatsApp’s terms and Indian law.</p>
+
+<h2>10. Cookies</h2>
+<p>We use a single essential cookie to keep you logged in. We do not use advertising cookies.</p>
+
+<h2>11. Children</h2>
+<p>Vivid Relay is a business service and is not meant for anyone under 18.</p>
+
+<h2>12. Changes</h2>
+<p>We may update this policy. We will post the new version here and, for significant changes, notify account holders by email.</p>
+
+<h2>13. Grievance officer</h2>
+<p>For complaints about how your data is handled, contact our grievance officer at {{with .Settings.support_email}}<a href="mailto:{{.}}">{{.}}</a>{{else}}<a href="/contact">our contact page</a>{{end}}. We aim to respond within 30 days.</p>
+
+<p class="callout callout--warn">WhatsApp is a trademark of Meta Platforms, Inc. Vivid Relay is an independent product and is not affiliated with, endorsed by or sponsored by Meta or WhatsApp.</p>
+</div></section>
+{{end}}

@@ -1,0 +1,34 @@
+{{define "content"}}
+<div class="auth">
+  <section class="auth__main" aria-labelledby="setup-title">
+    <div class="auth__box">
+      <h1 id="setup-title">Set up your gateway</h1>
+      <p class="lede">Create the first admin account. You’ll need the API key from your server’s <code>.env</code> file, shown at the end of the install.</p>
+      {{if .NeedsSetup}}
+      <form class="form" data-api="/auth/setup" data-redirect="/app" novalidate>
+        <div class="field"><label for="u-key">Server API key</label><input id="u-key" name="api_key" type="password" autocomplete="off" required spellcheck="false" aria-describedby="u-key-hint"><span class="hint" id="u-key-hint">Find it with <code>grep API_KEY .env</code> on the server.</span></div>
+        <div class="field"><label for="u-name">Your name</label><input id="u-name" name="name" autocomplete="name" required></div>
+        <div class="field"><label for="u-email">Admin email</label><input id="u-email" name="email" type="email" autocomplete="email" required></div>
+        <div class="field"><label for="u-pass">Password</label><div class="pw"><input id="u-pass" name="password" type="password" autocomplete="new-password" required minlength="8"><button type="button" data-pw-toggle aria-pressed="false" aria-controls="u-pass">Show</button></div><span class="hint">At least 8 characters.</span></div>
+        <button class="btn btn--signal btn--lg btn--block" type="submit" data-busy="Creating admin…">Create admin account</button>
+        <p class="form__msg" role="alert" aria-live="assertive"></p>
+      </form>
+      {{else}}
+      <p class="auth__setup">Setup is already complete. <a href="/login">Log in</a> instead.</p>
+      {{end}}
+    </div>
+  </section>
+  <aside class="auth__side" aria-hidden="true">
+    <div class="hero__mesh"></div>
+    <div>
+      <p class="hi" lang="hi">संदेश, सही समय पर।</p>
+      <h2>One server. All your numbers.</h2>
+    </div>
+    <div class="auth__feed">
+      <div class="bub bub--out">Namaste Asha ji, your order #2041 is out for delivery today.<div class="bub__meta">11:02 <svg class="ticks is-read" viewBox="0 0 16 10"><path d="M1 5.5l3 3L10 1.5M6.5 8.5l1 0L15 1.5"/></svg></div></div>
+      <div class="bub bub--in">Thank you! 🙏<div class="bub__meta">11:05</div></div>
+      <div class="bub bub--out">Reply STOP any time to stop updates.<div class="bub__meta">11:05 <svg class="ticks is-read" viewBox="0 0 16 10"><path d="M1 5.5l3 3L10 1.5M6.5 8.5l1 0L15 1.5"/></svg></div></div>
+    </div>
+  </aside>
+</div>
+{{end}}

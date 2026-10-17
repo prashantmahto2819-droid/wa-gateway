@@ -1,0 +1,40 @@
+{{define "content"}}
+<header class="phead">
+  <div class="wrap">
+    <span class="kicker" lang="hi">हमारी कहानी</span>
+    <h1>We build tools for businesses that run on WhatsApp</h1>
+    <p class="lede">Vivid Relay is made by {{with .Settings.company_name}}{{.}}{{else}}VividBrandify{{end}}, a small team that helps Indian businesses talk to their customers better.</p>
+  </div>
+</header>
+
+<section class="section">
+  <div class="wrap about-grid">
+    <div class="prose reveal">
+      <h2 style="margin-top:0">Why we made it</h2>
+      <p>Across India, the shop counter, the coaching centre and the clinic reception all have one thing in common: a phone buzzing with WhatsApp. Customers prefer it. Owners already use it. But sending updates to a few hundred people by hand takes hours, and the bulk tools we tried were either expensive, complicated, or careless with people’s numbers.</p>
+      <p>So we built the tool we wanted: one that links the numbers you already have, sends at a calm, human pace, respects people who say STOP, and gives developers a clean API when they need one.</p>
+      <h2>What we believe</h2>
+      <p>Good messaging is permission-based. We would rather you send fewer, useful messages that people reply to than thousands that get ignored or reported. Every safety feature in Vivid Relay comes from that idea.</p>
+      <p>We are also honest about limits. Vivid Relay is not the official WhatsApp Business API, and no tool can promise a number will never be restricted. We tell you this up front so you can choose what is right for your business.</p>
+      <p class="hi" lang="hi" style="font-size:1.2rem;color:var(--teal-ink)">कम संदेश, सही लोग, सही समय।</p>
+    </div>
+    <div class="reveal">
+      <ul class="values">
+        <li><b>Respect the inbox</b><span>Opt-outs are honoured across every number and every campaign, automatically.</span></li>
+        <li><b>Keep it light</b><span>The engine is small enough to run on a basic VPS, so self-hosting stays affordable.</span></li>
+        <li><b>Your data, your call</b><span>We don’t keep chat history or download customers’ media. Self-hosted customers keep everything on their own server.</span></li>
+        <li><b>Plain language</b><span>Clear pricing, clear limits, and support from people who answer in Hindi or English.</span></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="section section--tint">
+  <div class="wrap">
+    <div class="final reveal">
+      <div><h2>Want to talk it through?</h2><p>Tell us what you send today and we’ll suggest the right setup.</p></div>
+      <div class="final__ctas"><a class="btn btn--signal btn--lg" href="/contact">Contact us</a></div>
+    </div>
+  </div>
+</section>
+{{end}}

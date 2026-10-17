@@ -1,0 +1,129 @@
+{{define "content"}}
+<header class="phead">
+  <div class="wrap">
+    <span class="kicker">Developers</span>
+    <h1>API quickstart</h1>
+    <p class="lede">Send messages, queue campaigns and receive replies from your own software. Everything is JSON over HTTPS. The full machine-readable spec is at <a href="/openapi.json">/openapi.json</a>.</p>
+  </div>
+</header>
+
+<section class="section">
+  <div class="wrap docgrid">
+    <nav class="toc" aria-label="On this page">
+      <ol>
+        <li><a href="#auth">Authentication</a></li>
+        <li><a href="#send-text">Send a text</a></li>
+        <li><a href="#send-media">Send media</a></li>
+        <li><a href="#campaign">Queue a campaign</a></li>
+        <li><a href="#webhooks">Webhooks</a></li>
+        <li><a href="#verify">Verify signatures</a></li>
+        <li><a href="#errors">Errors</a></li>
+      </ol>
+    </nav>
+
+    <div class="prose">
+      <h2 id="auth" style="margin-top:0">Authentication</h2>
+      <p>Create an API key in your dashboard under <strong>Developer → API keys</strong>. Keys start with <code>vr_</code> and are shown once. Send it on every request:</p>
+<pre data-copy><code>Authorization: Bearer vr_your_key_here</code></pre>
+      <p>Replace <code>https://your-domain</code> below with your panel address and <code>SESSION</code> with the name of a linked number, which you’ll find on the Numbers page (for example <code>u3-main</code>).</p>
+      <div class="callout"><strong>Phone numbers:</strong> a 10-digit Indian number like <code>9876543210</code> gets <code>91</code> added automatically. You can also send to a group (<code>…@g.us</code>), a channel (<code>…@newsletter</code>) or a saved contact (<code>contact:12</code>).</div>
+
+      <h2 id="send-text">Send a text message</h2>
+      <p class="endpoint"><b>POST</b> /api/sessions/{session}/send</p>
+<pre data-copy><code>curl -X POST https://your-domain/api/sessions/SESSION/send \
+  -H "Authorization: Bearer $VR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "to": "9876543210",
+    "text": "Namaste {{"{{name}}"}}, your OTP is {{"{{code}}"}}",
+    "vars": { "name": "Asha", "code": "4821" }
+  }'</code></pre>
+      <p>Response:</p>
+<pre><code>{ "ok": true, "message": { "id": "3EB0…", "to": "919876543210@s.whatsapp.net", "timestamp": 1792214875, "new_contact": false } }</code></pre>
+
+      <h2 id="send-media">Send an image, video or document by URL</h2>
+      <p>The file is fetched into memory, sent, and forgotten. Use <code>type</code> <code>image</code>, <code>video</code>, <code>audio</code> or <code>document</code>; add <code>filename</code> for documents.</p>
+<pre data-copy><code>curl -X POST https://your-domain/api/sessions/SESSION/send \
+  -H "Authorization: Bearer $VR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "to": "9876543210",
+    "text": "Your invoice for October",
+    "media": { "type": "document", "url": "https://example.com/inv-2041.pdf", "filename": "Invoice-2041.pdf" }
+  }'</code></pre>
+
+      <h2 id="campaign">Queue a campaign</h2>
+      <p>Campaigns go through the safe queue: random gaps, typing, breaks, daily caps, sending hours and STOP handling all apply. Without <code>schedule.at</code> the campaign starts now.</p>
+      <p class="endpoint"><b>POST</b> /api/campaigns</p>
+<pre data-copy><code>curl -X POST https://your-domain/api/campaigns \
+  -H "Authorization: Bearer $VR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Diwali offer",
+    "sessions": ["SESSION"],
+    "message": { "text": "{Namaste|Hello} {{"{{name}}"}} ji, 20% off till Friday. Reply YES to book. Reply STOP to opt out." },
+    "audience": { "tags": ["vip"], "exclude_tags": ["unpaid"] },
+    "schedule": { "at": 1792310400, "repeat": "none" },
+    "speed": "safe"
+  }'</code></pre>
+      <p>Track it with <code>GET /api/campaigns/{id}</code>, and pause, resume or cancel with <code>POST /api/campaigns/{id}/pause</code>, <code>/resume</code> or <code>/cancel</code>. A quick one-off list without saved contacts still works through the older <code>POST /api/sessions/{session}/queue</code> endpoint.</p>
+
+      <h2 id="webhooks">Webhooks</h2>
+      <p>Add a webhook URL under <strong>Developer → Webhooks</strong> and choose events. Each event is a POST like this:</p>
+<pre><code>{ "event": "message", "session": "u3-main", "owner_id": 3, "timestamp": 1792214875,
+  "data": { "id": "3EB0…", "chat_phone": "919876543210", "push_name": "Asha", "type": "text", "text": "YES" } }</code></pre>
+      <p>Events include <code>message</code>, <code>message.receipt</code>, <code>poll.vote</code>, <code>queue.status</code>, <code>campaign.status</code>, <code>session.status</code>, <code>session.health</code>, <code>contact.optout</code> and <code>contact.optin</code>. If your endpoint does not return 2xx, delivery is retried a few times with increasing delays.</p>
+
+      <h2 id="verify">Verify webhook signatures</h2>
+      <p>Each request carries <code>X-Timestamp</code> and <code>X-Signature: sha256=&lt;hex&gt;</code>, an HMAC-SHA256 of <code>timestamp + "." + raw body</code> using your webhook secret. Reject anything older than five minutes.</p>
+      <h3>PHP</h3>
+<pre data-copy><code>&lt;?php
+$raw    = file_get_contents('php://input');
+$ts     = $_SERVER['HTTP_X_TIMESTAMP'] ?? '';
+$sig    = $_SERVER['HTTP_X_SIGNATURE'] ?? '';
+$secret = getenv('VR_WEBHOOK_SECRET');
+
+$expected = 'sha256=' . hash_hmac('sha256', $ts . '.' . $raw, $secret);
+if (!hash_equals($expected, $sig) || abs(time() - (int)$ts) &gt; 300) {
+    http_response_code(401);
+    exit;
+}
+$event = json_decode($raw, true);
+// handle $event['event'] …
+http_response_code(200);</code></pre>
+      <h3>Node.js (Express)</h3>
+<pre data-copy><code>const crypto = require('crypto');
+const express = require('express');
+const app = express();
+
+app.post('/vr-webhook', express.raw({ type: 'application/json' }), (req, res) =&gt; {
+  const ts = req.get('X-Timestamp') || '';
+  const sig = req.get('X-Signature') || '';
+  const expected = 'sha256=' + crypto
+    .createHmac('sha256', process.env.VR_WEBHOOK_SECRET)
+    .update(ts + '.' + req.body)
+    .digest('hex');
+  const ok = sig.length === expected.length &amp;&amp;
+    crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected)) &amp;&amp;
+    Math.abs(Date.now() / 1000 - Number(ts)) &lt; 300;
+  if (!ok) return res.sendStatus(401);
+
+  const event = JSON.parse(req.body);
+  // handle event.event …
+  res.sendStatus(200);
+});</code></pre>
+
+      <h2 id="errors">Errors</h2>
+      <p>Errors look like <code>{"ok": false, "code": "…", "error": "…"}</code> with a matching HTTP status. Codes worth handling:</p>
+      <ul>
+        <li><code>not_connected</code> (503): the number is offline or reconnecting.</li>
+        <li><code>not_on_whatsapp</code> (422): the recipient doesn’t use WhatsApp.</li>
+        <li><code>daily_limit</code>, <code>new_contact_limit</code>, <code>timelocked</code> (429): a safety limit was reached; try later.</li>
+        <li><code>limit_reached</code> (429), <code>feature_locked</code> (403): your plan doesn’t allow this.</li>
+        <li><code>unauthorized</code> (401): missing or wrong API key.</li>
+      </ul>
+      <p>Need help integrating? <a href="/contact">Contact us</a> or grab the <a href="/openapi.json">OpenAPI spec</a> for Postman or code generators.</p>
+    </div>
+  </div>
+</section>
+{{end}}

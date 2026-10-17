@@ -35,6 +35,8 @@ type Manager struct {
 	db        *sql.DB
 	container *sqlstore.Container
 	hooks     *Webhooks
+	lic       *Licensing
+	schedWake chan struct{}
 	log       *slog.Logger
 	waLog     waLog.Logger
 
@@ -42,7 +44,7 @@ type Manager struct {
 	sessions map[string]*Session
 }
 
-func newManager(ctx context.Context, cfg *Config, db *sql.DB, hooks *Webhooks, log *slog.Logger, waLogLevel string) (*Manager, error) {
+func newManager(ctx context.Context, cfg *Config, db *sql.DB, hooks *Webhooks, lic *Licensing, log *slog.Logger, waLogLevel string) (*Manager, error) {
 	wl := waLog.Stdout("WA", waLogLevel, false)
 	container := sqlstore.NewWithDB(db, "sqlite3", wl.Sub("DB"))
 	if err := container.Upgrade(ctx); err != nil {
@@ -53,29 +55,33 @@ func newManager(ctx context.Context, cfg *Config, db *sql.DB, hooks *Webhooks, l
 	store.DeviceProps.PlatformType = waCompanionReg.DeviceProps_CHROME.Enum()
 
 	return &Manager{
-		ctx: ctx, cfg: cfg, db: db, container: container, hooks: hooks, log: log, waLog: wl,
-		sessions: map[string]*Session{},
+		ctx: ctx, cfg: cfg, db: db, container: container, hooks: hooks, lic: lic, log: log, waLog: wl,
+		sessions: map[string]*Session{}, schedWake: make(chan struct{}, 1),
 	}, nil
 }
 
 // loadAll restores sessions from the database and reconnects linked ones.
 func (m *Manager) loadAll() error {
 	_, _ = m.db.ExecContext(m.ctx, `UPDATE gw_outbox SET status='queued' WHERE status='sending'`)
-	rows, err := m.db.QueryContext(m.ctx, `SELECT name, jid FROM gw_sessions ORDER BY name`)
+	rows, err := m.db.QueryContext(m.ctx, `SELECT name, jid, owner_id FROM gw_sessions ORDER BY name`)
 	if err != nil {
 		return err
 	}
-	type pair struct{ name, jid string }
+	type pair struct {
+		name, jid string
+		owner     int64
+	}
 	var list []pair
 	for rows.Next() {
 		var p pair
-		if err := rows.Scan(&p.name, &p.jid); err == nil {
+		if err := rows.Scan(&p.name, &p.jid, &p.owner); err == nil {
 			list = append(list, p)
 		}
 	}
 	rows.Close()
 	for _, p := range list {
 		s := m.add(p.name)
+		s.ownerID.Store(p.owner)
 		if p.jid == "" {
 			continue
 		}
@@ -90,6 +96,7 @@ func (m *Manager) loadAll() error {
 		}()
 	}
 	go m.watchdog()
+	go m.runScheduler()
 	return nil
 }
 
@@ -104,7 +111,7 @@ func (m *Manager) add(name string) *Session {
 	return s
 }
 
-func (m *Manager) create(name, webhookURL string) (*Session, error) {
+func (m *Manager) create(name, label string, owner int64, webhookURL string) (*Session, error) {
 	if !sessionNameRe.MatchString(name) {
 		return nil, errBadName
 	}
@@ -114,11 +121,41 @@ func (m *Manager) create(name, webhookURL string) (*Session, error) {
 	if exists {
 		return nil, errSessionExists
 	}
-	if _, err := m.db.ExecContext(m.ctx, `INSERT INTO gw_sessions(name, webhook_url, created_at) VALUES(?,?,?)`,
-		name, webhookURL, time.Now().Unix()); err != nil {
+	if label == "" {
+		label = name
+	}
+	if _, err := m.db.ExecContext(m.ctx, `INSERT INTO gw_sessions(name, label, owner_id, webhook_url, created_at) VALUES(?,?,?,?,?)`,
+		name, label, owner, webhookURL, time.Now().Unix()); err != nil {
 		return nil, errSessionExists
 	}
-	return m.add(name), nil
+	s := m.add(name)
+	s.ownerID.Store(owner)
+	return s, nil
+}
+
+// reloadOwners refreshes session owners after accounts change (first setup).
+func (m *Manager) reloadOwners() {
+	for _, s := range m.list() {
+		var owner int64
+		if m.db.QueryRow(`SELECT owner_id FROM gw_sessions WHERE name=?`, s.name).Scan(&owner) == nil {
+			s.ownerID.Store(owner)
+		}
+	}
+}
+
+// listFor returns the sessions a user may see.
+func (m *Manager) listFor(p *Principal) []*Session {
+	all := m.list()
+	if p.Admin() {
+		return all
+	}
+	out := all[:0:0]
+	for _, s := range all {
+		if s.owner() == p.UserID {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func (m *Manager) get(name string) (*Session, error) {

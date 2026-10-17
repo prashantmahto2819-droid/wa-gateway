@@ -1,0 +1,60 @@
+{{define "content"}}
+<!-- TEMPLATE: These terms are a plain-language starting point for an Indian SaaS. Have them reviewed by a qualified lawyer before relying on them. -->
+<header class="phead"><div class="wrap"><h1>Terms of service</h1><p class="lede">The agreement between you and {{with .Settings.company_name}}{{.}}{{else}}VividBrandify{{end}} for using Vivid Relay.</p></div></header>
+<section class="section"><div class="wrap prose">
+<p class="updated">By creating an account, buying a licence or using the API, you agree to these terms.</p>
+
+<h2>1. The service</h2>
+<p>Vivid Relay is software that connects to your WhatsApp account as a linked device so you can send and receive messages, run campaigns, manage contacts and integrate with other systems. It is offered as a hosted service and as a self-hosted licence.</p>
+<div class="callout callout--warn"><strong>Important:</strong> Vivid Relay is not the official WhatsApp Business Platform (Cloud API) and is not affiliated with, endorsed by or sponsored by Meta Platforms, Inc. WhatsApp is a trademark of Meta. WhatsApp may restrict or ban any number at its own discretion. Our safety features lower that risk but cannot remove it.</div>
+
+<h2>2. Your account</h2>
+<ul>
+<li>You must be at least 18 and able to enter a binding contract, and give accurate details.</li>
+<li>Keep your password and API keys secret. You are responsible for activity under your account.</li>
+<li>Only link WhatsApp numbers you own or are authorised to use.</li>
+</ul>
+
+<h2>3. Acceptable use</h2>
+<p>You are solely responsible for the messages you send and the people you send them to. You agree to:</p>
+<ul>
+<li>Message only people who have given you consent or have an existing relationship with you, and keep a record of that consent.</li>
+<li>Honour opt-out requests promptly. Do not remove or work around the STOP handling.</li>
+<li>Follow WhatsApp’s Terms of Service and Business Policy, the Information Technology Act, 2000, the Digital Personal Data Protection Act, 2023, TRAI regulations on unsolicited commercial communication where applicable, and all other applicable law.</li>
+<li>Not send spam, scams, phishing, misleading election content, adult or illegal content, hate speech, or content that infringes others’ rights.</li>
+<li>Not attempt to break, overload, resell without permission or reverse-engineer the service.</li>
+</ul>
+<p>We may suspend or terminate accounts that break these rules, with or without notice, and without refund where the breach is serious.</p>
+
+<h2>4. Plans, payment and taxes</h2>
+<ul>
+<li>Plans are billed in advance for the period shown. Prices exclude GST, which is added to your invoice.</li>
+<li>Limits (numbers, messages, contacts, storage) apply per plan and reset each period. Unused allowance does not carry over.</li>
+<li>Refunds follow our <a href="/refund">refund policy</a>.</li>
+</ul>
+
+<h2>5. Self-hosted licences</h2>
+<p>A self-hosted licence lets you install and run Vivid Relay on servers you control, for the number of instances and period stated on your licence. You may not share, resell or publish the licence key. You are responsible for your server’s security, backups and uptime.</p>
+
+<h2>6. Your data</h2>
+<p>You own the contacts, content and data you put into Vivid Relay. You give us permission to process it only to provide the service. Our <a href="/privacy">privacy policy</a> explains how we handle personal data.</p>
+
+<h2>7. Availability</h2>
+<p>We work hard to keep the service running but do not guarantee uninterrupted availability. WhatsApp may change its systems at any time, which can temporarily affect features until we adapt.</p>
+
+<h2>8. Limitation of liability</h2>
+<p>The service is provided “as is”. To the extent permitted by law, we are not liable for indirect or consequential losses, lost profits, or losses arising from WhatsApp restricting or banning your number. Our total liability for any claim is limited to the amount you paid us in the three months before the claim.</p>
+
+<h2>9. Indemnity</h2>
+<p>You agree to indemnify {{with .Settings.company_name}}{{.}}{{else}}VividBrandify{{end}} against claims arising from the messages you send, your breach of these terms, or your breach of law.</p>
+
+<h2>10. Ending the agreement</h2>
+<p>You may stop using the service at any time. We may end or suspend the service for breach, non-payment, or if required by law. On termination you can request an export of your contacts within 30 days.</p>
+
+<h2>11. Governing law</h2>
+<p>These terms are governed by the laws of India. Courts at the place of our registered office have exclusive jurisdiction.</p>
+
+<h2>12. Contact</h2>
+<p>Questions about these terms: {{with .Settings.support_email}}<a href="mailto:{{.}}">{{.}}</a>{{else}}<a href="/contact">our contact page</a>{{end}}.</p>
+</div></section>
+{{end}}

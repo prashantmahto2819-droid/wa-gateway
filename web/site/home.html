@@ -1,0 +1,299 @@
+{{define "content"}}
+<section class="hero" aria-labelledby="hero-title">
+  <div class="hero__mesh" aria-hidden="true"></div>
+  <div class="hero__grid-bg" aria-hidden="true"></div>
+  <div class="wrap hero__in">
+    <div>
+      <p class="hero__hi" lang="hi">संदेश, सही समय पर।</p>
+      <h1 id="hero-title"><span class="line">Every number.</span><span class="line">Every customer.</span><span class="line line--relay">One calm relay.</span></h1>
+      <p class="hero__sub">Link your WhatsApp numbers by QR, then send campaigns, polls, status updates and auto-replies from one panel — paced like a person types, so your numbers stay healthy.</p>
+      <div class="hero__ctas">
+        {{if .LoggedIn}}
+        <a class="btn btn--signal btn--lg" href="/app">Open dashboard</a>
+        {{else if .SignupOpen}}
+        <a class="btn btn--signal btn--lg" href="/signup">Start free trial</a>
+        {{else}}
+        <a class="btn btn--signal btn--lg" href="/contact">Request access</a>
+        {{end}}
+        <a class="btn btn--ghost btn--lg" href="/features">See how it works</a>
+      </div>
+      <p class="hero__fine"><strong>No card needed for the trial.</strong> Works with the WhatsApp app you already use.</p>
+    </div>
+
+    <div class="stage" data-phone aria-label="Example: a campaign message, a customer reply and a poll arriving on a phone" role="img">
+      <svg class="route" viewBox="0 0 500 560" preserveAspectRatio="none" aria-hidden="true">
+        <path d="M-20 120 C 120 100, 160 220, 250 230 S 420 200, 520 300"/>
+        <path d="M-20 420 C 140 460, 200 340, 260 330 S 400 420, 520 460"/>
+      </svg>
+      <div class="chip chip--a" aria-hidden="true">
+        <span class="chip__ico"><svg viewBox="0 0 16 16"><path d="M2 8.5l3.5 3.5L14 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        <span><b>1,284</b>delivered today</span>
+      </div>
+      <div class="chip chip--b" aria-hidden="true">
+        <span class="chip__ico"><svg viewBox="0 0 16 16"><path d="M8 2v6l4 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></span>
+        <span><b>38 s</b>human-like gap</span>
+      </div>
+      <div class="chip chip--c" aria-hidden="true">
+        <span class="chip__ico"><svg viewBox="0 0 16 16"><path d="M3 13V8M8 13V3M13 13V6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
+        <span><b>3 numbers</b>sharing the load</span>
+      </div>
+      <div class="phone" aria-hidden="true">
+        <div class="phone__screen">
+          <div class="phone__notch"></div>
+          <div class="phone__bar">
+            <span class="phone__avatar">SC</span>
+            <span class="phone__who"><b>Sharma Coaching</b><span>online</span></span>
+          </div>
+          <div class="phone__chat">
+            <div class="bub bub--out seq" data-wait="1300">
+              <div class="bub__media"></div>
+              Namaste Riya ji, our Diwali batch starts Monday. 20% off till Friday. Reply YES to reserve a seat.
+              <div class="bub__meta">10:02 <svg class="ticks" viewBox="0 0 16 10"><path d="M1 5.5l3 3L10 1.5M6.5 8.5l1 0L15 1.5"/></svg></div>
+            </div>
+            <div class="typing seq" data-transient data-wait="1300"><i></i><i></i><i></i></div>
+            <div class="bub bub--in seq" data-wait="1100">YES 🙏 Is there a weekend batch?<div class="bub__meta">10:04</div></div>
+            <div class="bub bub--out seq" data-wait="1600">
+              <div class="poll"><b>Which timing suits you?</b>
+                <div class="poll__opt is-chosen"><span class="poll__dot"></span><span>Sat–Sun morning</span><span>64%</span><span class="poll__track"><span class="poll__fill" data-w="64%"></span></span></div>
+                <div class="poll__opt"><span class="poll__dot"></span><span>Weekday evening</span><span>36%</span><span class="poll__track"><span class="poll__fill" data-w="36%"></span></span></div>
+              </div>
+              <div class="bub__meta">10:04 <svg class="ticks" viewBox="0 0 16 10"><path d="M1 5.5l3 3L10 1.5M6.5 8.5l1 0L15 1.5"/></svg></div>
+            </div>
+          </div>
+          <div class="phone__input">Message</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="trust" aria-label="Who uses it">
+  <div class="wrap trust__in">
+    <p>Built for teams that live on WhatsApp</p>
+    <ul class="trust__list">
+      <li>Coaching institutes</li><li>Clinics</li><li>Retail stores</li><li>NGOs</li><li>Real estate</li><li>Agencies</li>
+    </ul>
+  </div>
+</section>
+
+<section class="section" id="features" aria-labelledby="feat-title">
+  <div class="wrap">
+    <div class="head reveal">
+      <h2 id="feat-title">Everything you do on WhatsApp, without the copy-paste</h2>
+      <p class="lede">From one shop number to a team running five, the panel keeps sending, replying and tracking in one place.</p>
+    </div>
+    <div class="fgrid reveal">
+      <article class="wide feature--hot">
+        <span class="ico"><svg viewBox="0 0 24 24"><path d="M4 12h10M10 6l6 6-6 6"/><path d="M18 5v14"/></svg></span>
+        <h3>Safe bulk campaigns</h3>
+        <p>Messages leave one by one with random gaps, typing, breaks and daily caps. Spintax like {Namaste|Hello} keeps each message slightly different.</p>
+      </article>
+      <article class="wide">
+        <span class="ico"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 14h3v3M21 21h-4M21 14v3"/></svg></span>
+        <h3>Link many numbers by QR</h3>
+        <p>Scan from Linked devices like WhatsApp Web, or use a pairing code. Each number keeps its own limits and health.</p>
+      </article>
+      <article>
+        <span class="ico"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></span>
+        <h3>Scheduler &amp; repeats</h3>
+        <p>Send at 9 am tomorrow, every Monday, or on the 1st of each month.</p>
+      </article>
+      <article>
+        <span class="ico"><svg viewBox="0 0 24 24"><circle cx="8" cy="9" r="3"/><circle cx="16" cy="9" r="3"/><path d="M2 20c.8-3 3-5 6-5s5.2 2 6 5M14 15c3 0 5.2 2 6 5"/></svg></span>
+        <h3>Groups, communities, channels</h3>
+        <p>Post to groups you admin, community announcements and your channels.</p>
+      </article>
+      <article>
+        <span class="ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5" stroke-dasharray="3 3"/></svg></span>
+        <h3>Status posting</h3>
+        <p>Put text or image updates on your WhatsApp Status from the panel.</p>
+      </article>
+      <article>
+        <span class="ico"><svg viewBox="0 0 24 24"><path d="M5 6h14M5 12h9M5 18h5"/><circle cx="18" cy="17" r="3"/></svg></span>
+        <h3>Polls &amp; menu replies</h3>
+        <p>Ask with a poll, or send a numbered menu and route the reply.</p>
+      </article>
+      <article>
+        <span class="ico"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/><path d="M9 10h6"/></svg></span>
+        <h3>Auto-replies</h3>
+        <p>Welcome, keyword and away messages with office hours and cooldowns.</p>
+      </article>
+      <article>
+        <span class="ico"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"/><circle cx="19" cy="17" r="2"/></svg></span>
+        <h3>Contacts CRM</h3>
+        <p>Tags, notes, custom fields and CSV import. Use {{"{{city}}"}} in any message.</p>
+      </article>
+      <article>
+        <span class="ico"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/></svg></span>
+        <h3>Media library</h3>
+        <p>Upload offers, PDFs and videos once; reuse them in any campaign.</p>
+      </article>
+      <article>
+        <span class="ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="4" cy="6" r="2"/><circle cx="20" cy="6" r="2"/><circle cx="12" cy="21" r="1.6"/><path d="M6 7l4 3M18 7l-4 3M12 15v4"/></svg></span>
+        <h3>Number pool rotation</h3>
+        <p>Spread a campaign over several numbers; each person hears from the same one.</p>
+      </article>
+      <article>
+        <span class="ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg></span>
+        <h3>Proxy per number</h3>
+        <p>Give every number its own sticky proxy, tested before it is applied.</p>
+      </article>
+      <article>
+        <span class="ico"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg></span>
+        <h3>Health guard &amp; STOP</h3>
+        <p>Queues slow or pause when failures rise. Anyone who writes STOP is never messaged again.</p>
+      </article>
+      <article class="span8">
+        <span class="ico"><svg viewBox="0 0 24 24"><path d="M8 7l-5 5 5 5M16 7l5 5-5 5M14 4l-4 16"/></svg></span>
+        <h3>REST API, webhooks &amp; API keys</h3>
+        <p>Send from your website, CRM or n8n and Zapier-style flows. Signed webhooks tell you about every reply, receipt and opt-out.</p>
+      </article>
+      <article class="full">
+        <span class="ico"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M7 7.5h.01M7 16.5h.01"/></svg></span>
+        <h3>Self-hosted licence</h3>
+        <p>Prefer your own server? Buy a licence key, install with one command on a small VPS, and keep all data with you.</p>
+      </article>
+    </div>
+    <p class="center" style="margin-top:28px"><a class="btn btn--ghost" href="/features">Explore every feature</a></p>
+  </div>
+</section>
+
+<section class="section section--tint" aria-labelledby="how-title">
+  <div class="wrap">
+    <div class="head reveal">
+      <span class="kicker" lang="hi">तीन क़दम</span>
+      <h2 id="how-title">Live in ten minutes</h2>
+    </div>
+    <ol class="steps reveal">
+      <li><h3>Link your number</h3><p>Open WhatsApp on your phone, go to Linked devices and scan the QR shown in your dashboard. Your phone keeps working as usual.</p></li>
+      <li><h3>Bring your contacts</h3><p>Upload a CSV or Excel export, add tags like “Class 10” or “VIP”, or save members straight from a group.</p></li>
+      <li><h3>Send or schedule</h3><p>Write once with names and variables, pick an audience and a time. Watch delivered and read ticks come in live.</p></li>
+    </ol>
+  </div>
+</section>
+
+<section class="section section--deep" aria-labelledby="safe-title">
+  <div class="wrap safety">
+    <div class="reveal">
+      <span class="kicker" lang="hi">धीरे चलो, दूर तक चलो</span>
+      <h2 id="safe-title">Built to keep your numbers healthy</h2>
+      <p class="lede">WhatsApp watches for robotic behaviour. Vivid Relay sends the way a careful person would, and stops itself when something looks wrong.</p>
+      <figure class="warmup">
+        <div class="warmup__bars" aria-hidden="true">
+          <span style="--h:8%"></span><span style="--h:13%"></span><span style="--h:21%"></span><span style="--h:33%"></span><span style="--h:53%"></span><span style="--h:85%"></span><span style="--h:100%"></span>
+        </div>
+        <div class="warmup__axis" aria-hidden="true"><span>Day 1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span></div>
+        <figcaption>A new number starts at 20 messages on day one and grows gradually towards its daily cap.</figcaption>
+      </figure>
+    </div>
+    <div class="reveal">
+      <ul class="guards">
+        <li><b>Warm-up</b><span><strong>New numbers start slow</strong>Daily volume grows step by step instead of jumping to hundreds.</span></li>
+        <li><b>30–60 s</b><span><strong>Random gaps</strong>Every message waits a different time, shows typing, and takes a break after each batch.</span></li>
+        <li><b>Caps</b><span><strong>Daily and new-contact limits</strong>Separate limits for people who have never messaged you, and a weekly limit per person.</span></li>
+        <li><b>Timelock</b><span><strong>Detects WhatsApp’s reach-out lock</strong>When WhatsApp restricts new chats, sending to new people pauses; existing conversations continue.</span></li>
+        <li><b>STOP</b><span><strong>Opt-out respected</strong>STOP, “band karo” and similar replies remove a person from all future campaigns.</span></li>
+      </ul>
+      <div class="honest" role="note"><strong>Plain truth:</strong> these guards lower risk; they can’t guarantee a number will never be banned. Vivid Relay is not the official WhatsApp Business API. Message people who know you and have agreed to hear from you.</div>
+    </div>
+  </div>
+</section>
+
+<section class="section" aria-label="At a glance">
+  <div class="wrap">
+    <div class="stats reveal">
+      <div><b data-count="20">20</b><span>messages on a new number’s first day</span></div>
+      <div><b data-count="250">250</b><span>default daily cap per number</span></div>
+      <div><b data-count="3">3</b><span>campaign messages per person per week, at most</span></div>
+      <div><b data-count="60" data-suffix=" MB">60 MB</b><span>RAM or less for the self-hosted engine</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="section section--tint" aria-labelledby="use-title">
+  <div class="wrap">
+    <div class="head reveal">
+      <h2 id="use-title">How teams use it</h2>
+      <p class="lede">Small messages, sent at the right moment, to people who are waiting for them.</p>
+    </div>
+    <div class="uses reveal">
+      <article class="use"><h3>Coaching institutes</h3><p>Batch timings, test results and fee reminders to parents.</p><div class="use__msg">Aarav scored 86/100 in Sunday’s mock test. Next test: 3 Nov, 8 am.</div></article>
+      <article class="use"><h3>Clinics</h3><p>Appointment confirmations and follow-up reminders.</p><div class="use__msg">Your appointment with Dr. Mehta is tomorrow at 11:30. Reply 1 to confirm, 2 to reschedule.</div></article>
+      <article class="use"><h3>Retail &amp; D2C</h3><p>Festive offers, back-in-stock alerts and order updates.</p><div class="use__msg">Your saree order has shipped. Track it here: …</div></article>
+      <article class="use"><h3>NGOs &amp; communities</h3><p>Event calls, volunteer polls and channel updates.</p><div class="use__msg">Blood donation camp this Sunday, 9 am. Reply YES to join.</div></article>
+    </div>
+  </div>
+</section>
+
+<section class="section" aria-labelledby="price-title">
+  <div class="wrap">
+    <div class="head center reveal">
+      <h2 id="price-title">Simple monthly plans</h2>
+      <p class="lede">Start with one number. Add more when your team does.</p>
+    </div>
+    {{if .Plans}}
+    <div class="plans reveal">
+      {{range .Plans}}
+      <article class="plan{{if .highlight}} plan--hi{{end}}">
+        {{if .highlight}}<span class="plan__badge">Most popular</span>{{end}}
+        <h3>{{.name}}</h3>
+        <p class="plan__desc">{{.description}}</p>
+        <p class="plan__price"><b>{{money .price .currency}}</b>{{if .price}}<span class="plan__per">/ {{if eq .period_days 30}}month{{else}}{{.period_days}} days{{end}}</span>{{end}}</p>
+        {{if .trial}}<p class="plan__trial">Free trial plan</p>{{end}}
+        <ul class="plan__list">
+          <li>{{num .max_numbers}} WhatsApp number{{if ne .max_numbers 1}}s{{end}}</li>
+          <li>{{num .monthly_messages}} messages a month</li>
+          <li>{{num .max_contacts}} contacts</li>
+          <li{{if not (index .features "campaigns")}} class="is-off"{{end}}>Campaigns &amp; scheduler</li>
+          <li{{if not (index .features "api")}} class="is-off"{{end}}>API &amp; webhooks</li>
+        </ul>
+        {{if $.LoggedIn}}<a class="btn {{if .highlight}}btn--signal{{else}}btn--deep{{end}} btn--block" href="/app">Open dashboard</a>
+        {{else if $.SignupOpen}}<a class="btn {{if .highlight}}btn--signal{{else}}btn--deep{{end}} btn--block" href="/signup">Start free trial</a>
+        {{else}}<a class="btn {{if .highlight}}btn--signal{{else}}btn--deep{{end}} btn--block" href="/contact">Talk to us</a>{{end}}
+      </article>
+      {{end}}
+    </div>
+    <p class="note center">Prices exclude GST. <a href="/pricing">Compare all plans and limits</a>.</p>
+    {{else}}
+    <div class="empty reveal">
+      <h3>Pricing that fits your volume</h3>
+      <p class="muted">Tell us how many numbers and messages you need and we’ll send a plan within a working day.</p>
+      <a class="btn btn--deep" href="/contact">Contact us for pricing</a>
+    </div>
+    {{end}}
+  </div>
+</section>
+
+<section class="section section--tint" aria-labelledby="faq-title">
+  <div class="wrap">
+    <div class="head center reveal"><h2 id="faq-title">Questions people ask first</h2></div>
+    <div class="faq reveal">
+      <details><summary>Is this the official WhatsApp Business API?</summary><p>No. Vivid Relay connects to your WhatsApp account the same way WhatsApp Web does, as a linked device. That means no template approval and no per-message fees from Meta, but it also means you must follow WhatsApp’s terms and message only people who expect to hear from you. For bank-grade OTPs we recommend the official Cloud API.</p></details>
+      <details><summary>Can my number get banned?</summary><p>Any number that sends unwanted messages can be restricted. Our warm-up, random delays, daily caps, timelock detection and STOP handling reduce that risk a lot, but nobody can honestly promise zero bans. Send to customers who have opted in and keep your content useful.</p></details>
+      <details><summary>Do I need to keep my phone on?</summary><p>No. Once linked, sending continues even if your phone is off. Open WhatsApp on the phone at least once every 14 days, or WhatsApp removes linked devices.</p></details>
+      <details><summary>Can I use WhatsApp Business app numbers?</summary><p>Yes. Both the regular WhatsApp app and the WhatsApp Business app work. Your business name and profile stay the same.</p></details>
+      <details><summary>Do you store my chats or media?</summary><p>The engine does not keep chat history and does not download incoming photos or documents. We keep what the panel needs to work: your contacts, campaigns, queue status and the media you upload yourself.</p></details>
+      <details><summary>Can I run it on my own server?</summary><p>Yes. With a self-hosted licence you install Vivid Relay on your own VPS with one command and all data stays on your machine. <a href="/contact">Ask us for a licence</a>.</p></details>
+      <details><summary>How do I pay?</summary><p>{{with .Settings.payment_note}}{{.}}{{else}}We accept UPI, bank transfer and cards. You get a GST invoice for every payment.{{end}}</p></details>
+    </div>
+  </div>
+</section>
+
+<section class="section" aria-labelledby="final-title">
+  <div class="wrap">
+    <div class="final reveal">
+      <div>
+        <h2 id="final-title">Your next campaign can go out today</h2>
+        <p>Link a number, import a list, and send your first message in minutes.</p>
+        <p class="hi" lang="hi">आपका संदेश, आपके ग्राहक तक।</p>
+      </div>
+      <div class="final__ctas">
+        {{if .LoggedIn}}<a class="btn btn--signal btn--lg" href="/app">Open dashboard</a>
+        {{else if .SignupOpen}}<a class="btn btn--signal btn--lg" href="/signup">Start free trial</a>
+        {{else}}<a class="btn btn--signal btn--lg" href="/contact">Request access</a>{{end}}
+        <a class="btn btn--ghost btn--lg" href="/contact">Talk to us</a>
+      </div>
+    </div>
+  </div>
+</section>
+{{end}}

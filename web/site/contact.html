@@ -1,0 +1,34 @@
+{{define "content"}}
+<header class="phead">
+  <div class="wrap">
+    <span class="kicker" lang="hi">बात करें</span>
+    <h1>Contact us</h1>
+    <p class="lede">Questions about plans, a self-hosted licence or a custom setup? Send a message and we’ll reply within one working day.</p>
+  </div>
+</header>
+
+<section class="section">
+  <div class="wrap contact-grid">
+    <div>
+      <h2 style="font-size:1.6rem">Other ways to reach us</h2>
+      <ul class="channels">
+        {{with .Settings.support_email}}<li><span>Email</span><a href="mailto:{{.}}">{{.}}</a></li>{{end}}
+        {{with .Settings.support_phone}}<li><span>Phone</span><a href="tel:{{.}}">{{.}}</a></li>{{end}}
+        {{with .Settings.whatsapp_number}}<li><span>WhatsApp</span><a href="https://wa.me/{{.}}" rel="noopener">Chat with us on WhatsApp</a></li>{{end}}
+        {{with .Settings.address}}<li><span>Office</span><p style="white-space:pre-line;font-weight:500">{{.}}</p></li>{{end}}
+      </ul>
+      <p class="muted" style="margin-top:20px">Support hours: Monday to Saturday, 10 am to 7 pm IST.</p>
+    </div>
+    <form class="form form--card" data-api="/public/contact" data-success="Thanks, your message is with us. We’ll reply within one working day." novalidate>
+      <div class="row2">
+        <div class="field"><label for="c-name">Your name</label><input id="c-name" name="name" autocomplete="name" required maxlength="120"></div>
+        <div class="field"><label for="c-phone">Phone or WhatsApp <span class="muted">(optional)</span></label><input id="c-phone" name="phone" type="tel" autocomplete="tel" inputmode="tel" maxlength="20"></div>
+      </div>
+      <div class="field"><label for="c-email">Email</label><input id="c-email" name="email" type="email" autocomplete="email" required maxlength="160"></div>
+      <div class="field"><label for="c-msg">How can we help?</label><textarea id="c-msg" name="message" required maxlength="4000" placeholder="For example: we run a coaching centre with 2 numbers and about 3,000 students."></textarea></div>
+      <button class="btn btn--deep btn--lg" type="submit" data-busy="Sending…">Send message</button>
+      <p class="form__msg" role="status" aria-live="polite"></p>
+    </form>
+  </div>
+</section>
+{{end}}

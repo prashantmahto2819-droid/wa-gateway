@@ -2,11 +2,11 @@ package main
 
 import (
 	"context"
-	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
@@ -22,15 +22,60 @@ import (
 type API struct {
 	m       *Manager
 	cfg     *Config
+	lic     *Licensing
 	started time.Time
 }
 
 func (a *API) routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{$}", serveDashboard)
 	mux.HandleFunc("GET /health", a.health)
 
-	auth := func(h http.HandlerFunc) http.HandlerFunc { return a.auth(h) }
+	// Website, dashboard and static files
+	for path := range sitePages {
+		mux.HandleFunc("GET "+path+map[bool]string{true: "{$}", false: ""}[path == "/"], a.sitePage)
+	}
+	mux.HandleFunc("GET /app", a.appShell)
+	mux.HandleFunc("GET /app/", a.appShell)
+	mux.Handle("GET /static/", staticHandler())
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) { a.renderPage(w, r, "404", http.StatusNotFound) })
+
+	// Public JSON
+	mux.HandleFunc("GET /public/plans", a.publicPlans)
+	mux.HandleFunc("GET /public/settings", a.publicSettings)
+	mux.HandleFunc("POST /public/contact", limitBody(a.publicContact))
+	mux.HandleFunc("POST /licence/v1/activate", limitBody(a.licenceActivate))
+	mux.HandleFunc("GET /openapi.json", a.openAPI)
+
+	// Accounts
+	mux.HandleFunc("GET /auth/state", a.authState)
+	mux.HandleFunc("POST /auth/setup", limitBody(a.authSetup))
+	mux.HandleFunc("POST /auth/signup", limitBody(a.authSignup))
+	mux.HandleFunc("POST /auth/login", limitBody(a.authLogin))
+	mux.HandleFunc("POST /auth/logout", a.authLogout)
+
+	auth := a.auth
+	admin := func(h http.HandlerFunc) http.HandlerFunc { return a.auth(a.adminOnly(h)) }
+	server := func(h http.HandlerFunc) http.HandlerFunc { return a.auth(a.serverOnly(h)) }
+
+	mux.HandleFunc("GET /api/me", auth(a.me))
+	mux.HandleFunc("PATCH /api/me", auth(a.updateMe))
+	mux.HandleFunc("POST /api/me/password", auth(a.changePassword))
+	mux.HandleFunc("GET /api/me/ai", auth(a.getAI))
+	mux.HandleFunc("PATCH /api/me/ai", auth(a.setAI))
+	mux.HandleFunc("POST /api/me/ai/test", auth(a.testAI))
+	mux.HandleFunc("GET /api/licence", auth(a.licenceInfo))
+	mux.HandleFunc("POST /api/licence/redeem", auth(a.redeemLicence))
+	mux.HandleFunc("GET /api/keys", auth(a.listKeys))
+	mux.HandleFunc("POST /api/keys", auth(a.createKey))
+	mux.HandleFunc("DELETE /api/keys/{id}", auth(a.deleteKey))
+	mux.HandleFunc("GET /api/webhooks", auth(a.listWebhooks))
+	mux.HandleFunc("POST /api/webhooks", auth(a.createWebhook))
+	mux.HandleFunc("PATCH /api/webhooks/{id}", auth(a.updateWebhook))
+	mux.HandleFunc("DELETE /api/webhooks/{id}", auth(a.deleteWebhook))
+	mux.HandleFunc("POST /api/webhooks/{id}/test", auth(a.testWebhook))
+	mux.HandleFunc("GET /api/stats", auth(a.stats))
+
+	// Numbers
 	mux.HandleFunc("GET /api/sessions", auth(a.listSessions))
 	mux.HandleFunc("POST /api/sessions", auth(a.createSession))
 	mux.HandleFunc("GET /api/sessions/{name}", auth(a.getSession))
@@ -41,51 +86,135 @@ func (a *API) routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{name}/pair-code", auth(a.pairCode))
 	mux.HandleFunc("POST /api/sessions/{name}/logout", auth(a.logout))
 	mux.HandleFunc("POST /api/sessions/{name}/reconnect", auth(a.reconnect))
+	mux.HandleFunc("POST /api/sessions/{name}/proxy-test", auth(a.proxyTest))
 
+	// Sending
 	mux.HandleFunc("POST /api/sessions/{name}/send", auth(a.send))
-	mux.HandleFunc("POST /api/sessions/{name}/queue", auth(a.enqueue))
-	mux.HandleFunc("GET /api/sessions/{name}/queue", auth(a.queueStats))
+	mux.HandleFunc("POST /api/sessions/{name}/react", auth(func(w http.ResponseWriter, r *http.Request) { a.msgAction(w, r, "react") }))
+	mux.HandleFunc("POST /api/sessions/{name}/edit", auth(func(w http.ResponseWriter, r *http.Request) { a.msgAction(w, r, "edit") }))
+	mux.HandleFunc("POST /api/sessions/{name}/delete", auth(func(w http.ResponseWriter, r *http.Request) { a.msgAction(w, r, "delete") }))
+	mux.HandleFunc("POST /api/sessions/{name}/status", auth(a.postStatus))
 	mux.HandleFunc("POST /api/sessions/{name}/read", auth(a.markRead))
 	mux.HandleFunc("POST /api/sessions/{name}/typing", auth(a.typing))
 	mux.HandleFunc("POST /api/sessions/{name}/check", auth(a.check))
-	mux.HandleFunc("GET /api/sessions/{name}/groups", auth(a.groups))
-	mux.HandleFunc("GET /api/sessions/{name}/channels", auth(a.channels))
-	mux.HandleFunc("GET /api/sessions/{name}/channels/resolve", auth(a.resolveChannel))
-
+	mux.HandleFunc("POST /api/sessions/{name}/queue", auth(a.enqueue))
+	mux.HandleFunc("GET /api/sessions/{name}/queue", auth(a.queueStats))
 	mux.HandleFunc("POST /api/queue", auth(a.enqueuePool))
 	mux.HandleFunc("GET /api/queue/{id}", auth(a.queueItem))
-	mux.HandleFunc("POST /api/sessions/{name}/proxy-test", auth(a.proxyTest))
+	mux.HandleFunc("GET /api/queue/campaigns/{campaign}", auth(a.campaignStatsByLabel))
+	mux.HandleFunc("POST /api/queue/campaigns/{campaign}/cancel", auth(a.cancelCampaignByLabel))
+
+	// Groups, communities, channels
+	mux.HandleFunc("GET /api/sessions/{name}/groups", auth(a.groups))
+	mux.HandleFunc("POST /api/sessions/{name}/groups", auth(a.createGroup))
+	mux.HandleFunc("POST /api/sessions/{name}/groups/join", auth(a.joinGroup))
+	mux.HandleFunc("GET /api/sessions/{name}/groups/{jid}", auth(a.groupInfo))
+	mux.HandleFunc("POST /api/sessions/{name}/groups/{jid}/participants", auth(a.groupParticipants))
+	mux.HandleFunc("GET /api/sessions/{name}/groups/{jid}/invite", auth(a.groupInvite))
+	mux.HandleFunc("POST /api/sessions/{name}/groups/{jid}/settings", auth(a.groupSettings))
+	mux.HandleFunc("POST /api/sessions/{name}/groups/{jid}/leave", auth(a.leaveGroup))
+	mux.HandleFunc("POST /api/sessions/{name}/groups/{jid}/save-contacts", auth(a.saveGroupContacts))
+	mux.HandleFunc("GET /api/sessions/{name}/channels", auth(a.channels))
+	mux.HandleFunc("POST /api/sessions/{name}/channels", auth(a.createChannel))
+	mux.HandleFunc("GET /api/sessions/{name}/channels/resolve", auth(a.resolveChannel))
+
+	// CRM, media, templates, campaigns, automation
+	mux.HandleFunc("GET /api/contacts", auth(a.listContacts))
+	mux.HandleFunc("POST /api/contacts", auth(a.saveContact))
+	mux.HandleFunc("GET /api/contacts/tags", auth(a.contactTags))
+	mux.HandleFunc("GET /api/contacts/export.csv", auth(a.exportContacts))
+	mux.HandleFunc("POST /api/contacts/import", auth(a.importContacts))
+	mux.HandleFunc("POST /api/contacts/bulk", auth(a.bulkContacts))
+	mux.HandleFunc("PATCH /api/contacts/{id}", auth(a.saveContact))
+	mux.HandleFunc("DELETE /api/contacts/{id}", auth(a.deleteContact))
 	mux.HandleFunc("GET /api/optouts", auth(a.listOptouts))
 	mux.HandleFunc("POST /api/optouts", auth(a.addOptouts))
 	mux.HandleFunc("DELETE /api/optouts/{phone}", auth(a.removeOptout))
-	mux.HandleFunc("GET /api/campaigns/{campaign}", auth(a.campaignStats))
-	mux.HandleFunc("POST /api/campaigns/{campaign}/cancel", auth(a.cancelCampaign))
+	mux.HandleFunc("GET /api/media", auth(a.listMedia))
+	mux.HandleFunc("POST /api/media", auth(a.uploadMedia))
+	mux.HandleFunc("GET /api/media/{id}/file", auth(a.mediaFile))
+	mux.HandleFunc("DELETE /api/media/{id}", auth(a.deleteMedia))
+	mux.HandleFunc("GET /api/templates", auth(a.listTemplates))
+	mux.HandleFunc("POST /api/templates", auth(a.saveTemplate))
+	mux.HandleFunc("PATCH /api/templates/{id}", auth(a.saveTemplate))
+	mux.HandleFunc("DELETE /api/templates/{id}", auth(a.deleteTemplate))
+	mux.HandleFunc("GET /api/campaigns", auth(a.listCampaigns))
+	mux.HandleFunc("POST /api/campaigns", auth(a.createCampaign))
+	mux.HandleFunc("GET /api/campaigns/{id}", auth(a.getCampaign))
+	mux.HandleFunc("PATCH /api/campaigns/{id}", auth(a.updateCampaign))
+	mux.HandleFunc("DELETE /api/campaigns/{id}", auth(a.deleteCampaign))
+	mux.HandleFunc("POST /api/campaigns/{id}/{action}", auth(a.campaignAction))
+	mux.HandleFunc("GET /api/campaigns/{id}/report.csv", auth(a.campaignReport))
+	mux.HandleFunc("GET /api/autoreplies", auth(a.listAutoReplies))
+	mux.HandleFunc("POST /api/autoreplies", auth(a.saveAutoReply))
+	mux.HandleFunc("PATCH /api/autoreplies/{id}", auth(a.saveAutoReply))
+	mux.HandleFunc("DELETE /api/autoreplies/{id}", auth(a.deleteAutoReply))
+
+	// Admin
+	mux.HandleFunc("GET /api/admin/overview", admin(a.adminOverview))
+	mux.HandleFunc("GET /api/admin/users", admin(a.adminUsers))
+	mux.HandleFunc("PATCH /api/admin/users/{id}", admin(a.adminUpdateUser))
+	mux.HandleFunc("POST /api/admin/users/{id}/reset-password", admin(a.adminResetPassword))
+	mux.HandleFunc("POST /api/admin/users/{id}/grant", server(a.adminGrant))
+	mux.HandleFunc("DELETE /api/admin/users/{id}", admin(a.adminDeleteUser))
+	mux.HandleFunc("GET /api/admin/plans", server(a.adminPlans))
+	mux.HandleFunc("POST /api/admin/plans", server(a.adminSavePlan))
+	mux.HandleFunc("PATCH /api/admin/plans/{id}", server(a.adminSavePlan))
+	mux.HandleFunc("DELETE /api/admin/plans/{id}", server(a.adminDeletePlan))
+	mux.HandleFunc("GET /api/admin/licences", server(a.adminLicences))
+	mux.HandleFunc("POST /api/admin/licences", server(a.adminCreateLicences))
+	mux.HandleFunc("PATCH /api/admin/licences/{id}", server(a.adminUpdateLicence))
+	mux.HandleFunc("DELETE /api/admin/licences/{id}", server(a.adminDeleteLicence))
+	mux.HandleFunc("GET /api/admin/activations", server(a.adminActivations))
+	mux.HandleFunc("GET /api/admin/licence-server", server(a.adminLicenceServer))
+	mux.HandleFunc("GET /api/admin/settings", admin(a.adminSettings))
+	mux.HandleFunc("PATCH /api/admin/settings", admin(a.adminSaveSettings))
+	mux.HandleFunc("GET /api/admin/inbox", admin(a.adminInbox))
+	mux.HandleFunc("POST /api/admin/inbox/{id}/read", admin(a.adminInboxRead))
+	mux.HandleFunc("DELETE /api/admin/inbox/{id}", admin(a.adminInboxDelete))
+	mux.HandleFunc("GET /api/admin/audit", admin(a.adminAudit))
 	return securityHeaders(mux)
+}
+
+func limitBody(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		h(w, r)
+	}
 }
 
 func securityHeaders(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		h.ServeHTTP(w, r)
 	})
 }
 
+// auth lets in the master key, user API keys and logged-in browsers.
 func (a *API) auth(h http.HandlerFunc) http.HandlerFunc {
-	want := []byte(a.cfg.APIKey)
 	return func(w http.ResponseWriter, r *http.Request) {
-		key := r.Header.Get("X-API-Key")
-		if b, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
-			key = b
-		}
-		if subtle.ConstantTimeCompare([]byte(key), want) != 1 {
-			time.Sleep(300 * time.Millisecond) // slow down guessing
-			writeErr(w, http.StatusUnauthorized, "unauthorized", errors.New("missing or wrong API key"))
+		p, err := a.resolvePrincipal(r)
+		if err != nil {
+			writeErr(w, http.StatusForbidden, "csrf", err)
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, 64<<20)
-		h(w, r)
+		if p == nil {
+			time.Sleep(200 * time.Millisecond) // slow down guessing
+			writeErr(w, http.StatusUnauthorized, "unauthorized", errors.New("log in or send a valid API key"))
+			return
+		}
+		if p.ViaKey && !p.Admin() {
+			if err := a.lic.require(r.Context(), p.UserID, "api"); err != nil {
+				a.fail(w, err)
+				return
+			}
+		}
+		if !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") {
+			r.Body = http.MaxBytesReader(w, r.Body, 16<<20)
+		}
+		h(w, r.WithContext(context.WithValue(r.Context(), principalKey, p)))
 	}
 }
 
@@ -122,6 +251,16 @@ func errStatus(err error) (int, string) {
 		return http.StatusTooManyRequests, "daily_limit"
 	case errors.Is(err, errNewLimit):
 		return http.StatusTooManyRequests, "new_contact_limit"
+	case errors.Is(err, errLicenceRequired):
+		return http.StatusPaymentRequired, "licence_required"
+	case errors.Is(err, errLicenceExpired):
+		return http.StatusPaymentRequired, "licence_expired"
+	case errors.Is(err, errFeatureLocked):
+		return http.StatusForbidden, "feature_locked"
+	case errors.Is(err, errLimitReached):
+		return http.StatusTooManyRequests, "limit_reached"
+	case errors.Is(err, errForbidden):
+		return http.StatusForbidden, "forbidden"
 	case errors.Is(err, context.DeadlineExceeded):
 		return http.StatusGatewayTimeout, "timeout"
 	case isPermanent(err):
@@ -132,6 +271,11 @@ func errStatus(err error) (int, string) {
 
 func (a *API) fail(w http.ResponseWriter, err error) {
 	code, kind := errStatus(err)
+	var le *limitError
+	if errors.As(err, &le) {
+		writeJSON(w, code, map[string]any{"ok": false, "code": kind, "limit": le.name, "error": err.Error()})
+		return
+	}
 	writeErr(w, code, kind, err)
 }
 
@@ -143,8 +287,14 @@ func decode(r *http.Request, v any) error {
 	return nil
 }
 
+// session returns the number in the URL if the caller may use it.
 func (a *API) session(w http.ResponseWriter, r *http.Request) *Session {
 	s, err := a.m.get(r.PathValue("name"))
+	if err == nil {
+		if p := principalOf(r); p != nil && !p.Admin() && s.owner() != p.UserID {
+			err = errNoSession // don't reveal other customers' numbers
+		}
+	}
 	if err != nil {
 		a.fail(w, err)
 		return nil
@@ -190,7 +340,7 @@ func (a *API) sessionInfo(ctx context.Context, s *Session) map[string]any {
 	info := map[string]any{
 		"name": s.name, "status": st, "error": lastErr, "jid": r.jid, "phone": strings.SplitN(strings.SplitN(r.jid, "@", 2)[0], ":", 2)[0],
 		"push_name": push, "paused": r.paused,
-		"today": map[string]any{"sent": sent, "limit": s.dailyLimit(r.pairedAt), "new_contacts": sentNew, "new_contact_limit": a.cfg.NewContactLimit},
+		"today": map[string]any{"sent": sent, "limit": s.effectiveDailyLimit(ctx, r.pairedAt), "new_contacts": sentNew, "new_contact_limit": a.cfg.NewContactLimit},
 	}
 	if r.timelockUntil > now.Unix() {
 		info["timelock_until"] = r.timelockUntil
@@ -208,31 +358,71 @@ func (a *API) sessionInfo(ctx context.Context, s *Session) map[string]any {
 		info["pause_reason"] = r.pauseReason
 	}
 	info["health"] = s.health(ctx, r)
+	var label string
+	_ = a.m.db.QueryRowContext(ctx, `SELECT label FROM gw_sessions WHERE name=?`, s.name).Scan(&label)
+	if label == "" {
+		label = s.name
+	}
+	info["label"], info["owner_id"], info["settings"] = label, s.owner(), s.settings(ctx)
 	return info
 }
 
 func (a *API) listSessions(w http.ResponseWriter, r *http.Request) {
 	out := []map[string]any{}
-	for _, s := range a.m.list() {
+	for _, s := range a.m.listFor(principalOf(r)) {
 		out = append(out, a.sessionInfo(r.Context(), s))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "sessions": out})
 }
 
 func (a *API) createSession(w http.ResponseWriter, r *http.Request) {
+	p := principalOf(r)
 	var body struct {
 		Name       string `json:"name"`
+		Label      string `json:"label"`
 		WebhookURL string `json:"webhook_url"`
 	}
 	if err := decode(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "bad_request", err)
 		return
 	}
-	s, err := a.m.create(strings.ToLower(strings.TrimSpace(body.Name)), strings.TrimSpace(body.WebhookURL))
+	if err := a.lic.checkLimit(r.Context(), p.UserID, "numbers", 1); err != nil {
+		a.fail(w, err)
+		return
+	}
+	if body.WebhookURL != "" && !validWebhookURL(body.WebhookURL) {
+		writeErr(w, http.StatusBadRequest, "bad_request", errors.New("webhook_url must be an http(s) address"))
+		return
+	}
+	label := truncate(strings.TrimSpace(body.Label), 60)
+	name := strings.ToLower(strings.TrimSpace(body.Name))
+	if name == "" || !p.Admin() {
+		// Customers get unique internal names; the label is what they see.
+		slug := strings.Trim(unsafeName.ReplaceAllString(strings.ToLower(firstNonEmpty(label, name, "number")), "-"), "-._")
+		slug = strings.ReplaceAll(slug, ".", "-")
+		if len(slug) > 16 {
+			slug = slug[:16]
+		}
+		if slug == "" {
+			slug = "number"
+		}
+		name = fmt.Sprintf("u%d-%s", p.UserID, slug)
+		for i := 2; ; i++ {
+			if _, err := a.m.get(name); err != nil {
+				break
+			}
+			name = fmt.Sprintf("u%d-%s-%d", p.UserID, slug, i)
+		}
+	}
+	if label == "" {
+		label = name
+	}
+	s, err := a.m.create(name, label, p.UserID, strings.TrimSpace(body.WebhookURL))
 	if err != nil {
 		a.fail(w, err)
 		return
 	}
+	audit(r.Context(), a.m.db, p.UserID, clientIP(r), "number.create", name)
 	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "session": a.sessionInfo(r.Context(), s)})
 }
 
@@ -248,15 +438,37 @@ func (a *API) updateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		WebhookURL *string `json:"webhook_url"`
-		Paused     *bool   `json:"paused"`
-		Proxy      *string `json:"proxy"` // "" removes it
+		WebhookURL *string          `json:"webhook_url"`
+		Paused     *bool            `json:"paused"`
+		Proxy      *string          `json:"proxy"` // "" removes it
+		Label      *string          `json:"label"`
+		Settings   *SessionSettings `json:"settings"`
 	}
 	if err := decode(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "bad_request", err)
 		return
 	}
 	ctx := r.Context()
+	if body.Label != nil && strings.TrimSpace(*body.Label) != "" {
+		_, _ = a.m.db.ExecContext(ctx, `UPDATE gw_sessions SET label=? WHERE name=?`, truncate(strings.TrimSpace(*body.Label), 60), s.name)
+	}
+	if body.Settings != nil {
+		st := *body.Settings
+		st.RejectMessage = truncate(strings.TrimSpace(st.RejectMessage), 500)
+		st.TakeoverMinutes = min(max(st.TakeoverMinutes, 0), 24*60)
+		_, _ = a.m.db.ExecContext(ctx, `UPDATE gw_sessions SET settings=? WHERE name=?`, jsonText(st), s.name)
+		if cli, err := s.ready(); err == nil {
+			if st.AlwaysOnline {
+				_ = cli.SendPresence(ctx, types.PresenceAvailable)
+			} else {
+				_ = cli.SendPresence(ctx, types.PresenceUnavailable)
+			}
+		}
+	}
+	if body.WebhookURL != nil && *body.WebhookURL != "" && !validWebhookURL(*body.WebhookURL) {
+		writeErr(w, http.StatusBadRequest, "bad_request", errors.New("webhook_url must be an http(s) address"))
+		return
+	}
 	if body.WebhookURL != nil {
 		_, _ = a.m.db.ExecContext(ctx, `UPDATE gw_sessions SET webhook_url=? WHERE name=?`, strings.TrimSpace(*body.WebhookURL), s.name)
 	}
@@ -287,7 +499,12 @@ func (a *API) updateSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) deleteSession(w http.ResponseWriter, r *http.Request) {
-	if err := a.m.remove(r.Context(), r.PathValue("name")); err != nil {
+	s := a.session(w, r)
+	if s == nil {
+		return
+	}
+	audit(r.Context(), a.m.db, principalOf(r).UserID, clientIP(r), "number.delete", s.name)
+	if err := a.m.remove(r.Context(), s.name); err != nil {
 		a.fail(w, err)
 		return
 	}
@@ -453,6 +670,7 @@ func (a *API) enqueuePool(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) doEnqueue(w http.ResponseWriter, r *http.Request, pool []string, body *queueBody) {
 	ctx := r.Context()
+	p := principalOf(r)
 	seen := map[string]bool{}
 	var clean []string
 	for _, n := range pool {
@@ -460,7 +678,8 @@ func (a *API) doEnqueue(w http.ResponseWriter, r *http.Request, pool []string, b
 		if seen[n] {
 			continue
 		}
-		if _, err := a.m.get(n); err != nil {
+		s, err := a.m.get(n)
+		if err != nil || (!p.Admin() && s.owner() != p.UserID) {
 			writeErr(w, http.StatusNotFound, "session_not_found", errors.New("unknown session in pool: "+n))
 			return
 		}
@@ -468,11 +687,16 @@ func (a *API) doEnqueue(w http.ResponseWriter, r *http.Request, pool []string, b
 		clean = append(clean, n)
 	}
 	pool = clean
-	poolCol := ""
-	if len(pool) > 1 {
-		poolCol = strings.Join(pool, ",")
+	if err := a.lic.require(ctx, p.UserID, "campaigns"); err != nil {
+		a.fail(w, err)
+		return
 	}
-
+	if len(pool) > 1 {
+		if err := a.lic.require(ctx, p.UserID, "pool"); err != nil {
+			a.fail(w, err)
+			return
+		}
+	}
 	msgs := body.Messages
 	if body.Template != nil {
 		for _, rc := range body.Recipients {
@@ -489,89 +713,36 @@ func (a *API) doEnqueue(w http.ResponseWriter, r *http.Request, pool []string, b
 		writeErr(w, http.StatusBadRequest, "bad_request", errors.New("at most 10000 messages per request"))
 		return
 	}
-	type row struct {
-		session, to, payload string
-		priority             int
-	}
-	rows := make([]row, 0, len(msgs))
-	cands := a.m.poolCandidates(ctx, pool)
-	skipped, dupes := 0, 0
-	inBatch := map[string]bool{}
 	for i := range msgs {
 		if err := msgs[i].validate(); err != nil {
 			writeErr(w, http.StatusBadRequest, "bad_request", errors.New("message "+itoa(i)+": "+err.Error()))
 			return
 		}
-		to, err := parseTarget(msgs[i].To, a.cfg.DefaultCountryCode)
-		if err != nil {
+		if _, err := parseTarget(msgs[i].To, a.cfg.DefaultCountryCode); err != nil {
 			writeErr(w, http.StatusBadRequest, "bad_request", errors.New("message "+itoa(i)+": "+err.Error()))
 			return
 		}
 		if msgs[i].Media != nil && msgs[i].Media.Base64 != "" {
-			writeErr(w, http.StatusBadRequest, "bad_request", errors.New("message "+itoa(i)+": queued messages must use media.url, not base64"))
+			writeErr(w, http.StatusBadRequest, "bad_request", errors.New("message "+itoa(i)+": queued messages must use media.url or media.media_id, not base64"))
 			return
 		}
-		key := to.String()
-		if isOptedOut(ctx, a.m.db, key) {
-			skipped++
-			continue
-		}
-		if inBatch[key] && to.Server != types.GroupServer && to.Server != types.NewsletterServer {
-			dupes++ // same person twice in one campaign
-			continue
-		}
-		inBatch[key] = true
-		session := pool[len(rows)%len(pool)] // nobody usable yet: spread evenly
-		if len(pool) > 1 {
-			if pick := a.m.pickSession(ctx, cands, key); pick != "" {
-				session = pick
-			}
-		}
-		p, _ := json.Marshal(msgs[i])
-		rows = append(rows, row{session: session, to: key, payload: string(p), priority: a.m.priorityFor(ctx, pool, key)})
 	}
-
-	tx, err := a.m.db.BeginTx(ctx, nil)
+	owner := p.UserID
+	if s, err := a.m.get(pool[0]); err == nil {
+		owner = s.owner()
+	}
+	res, err := a.m.enqueue(ctx, owner, pool, 0, body.Campaign, msgs, body.SendAfter, 1)
 	if err != nil {
 		a.fail(w, err)
 		return
 	}
-	defer tx.Rollback()
-	stmt, err := tx.PrepareContext(ctx, `INSERT INTO gw_outbox(session,campaign,to_addr,payload,status,not_before,priority,pool,created_at) VALUES(?,?,?,?,'queued',?,?,?,?)`)
-	if err != nil {
-		a.fail(w, err)
-		return
+	out := map[string]any{"ok": true, "queued": res.Queued, "skipped_opted_out": res.Skipped, "skipped_duplicates": res.Dupes,
+		"per_session": res.PerSession, "campaign": body.Campaign}
+	if len(res.IDs) > 0 {
+		out["first_id"], out["last_id"] = res.IDs[0], res.IDs[len(res.IDs)-1]
 	}
-	defer stmt.Close()
-	now := time.Now().Unix()
-	ids := make([]int64, 0, len(rows))
-	perSession := map[string]int{}
-	for _, rw := range rows {
-		res, err := stmt.ExecContext(ctx, rw.session, body.Campaign, rw.to, rw.payload, body.SendAfter, rw.priority, poolCol, now)
-		if err != nil {
-			a.fail(w, err)
-			return
-		}
-		id, _ := res.LastInsertId()
-		ids = append(ids, id)
-		perSession[rw.session]++
-	}
-	if err := tx.Commit(); err != nil {
-		a.fail(w, err)
-		return
-	}
-	for name := range perSession {
-		if s, err := a.m.get(name); err == nil {
-			s.poke()
-		}
-	}
-	out := map[string]any{"ok": true, "queued": len(ids), "skipped_opted_out": skipped, "skipped_duplicates": dupes,
-		"per_session": perSession, "campaign": body.Campaign}
-	if len(ids) > 0 {
-		out["first_id"], out["last_id"] = ids[0], ids[len(ids)-1]
-	}
-	if len(ids) <= 100 {
-		out["ids"] = ids
+	if len(res.IDs) <= 100 {
+		out["ids"] = res.IDs
 	}
 	writeJSON(w, http.StatusAccepted, out)
 }
@@ -579,7 +750,7 @@ func (a *API) doEnqueue(w http.ResponseWriter, r *http.Request, pool []string, b
 func itoa(i int) string { return strconv.Itoa(i) }
 
 func statusCounts(ctx context.Context, db *sql.DB, where string, arg any) map[string]int {
-	out := map[string]int{"queued": 0, "sending": 0, "sent": 0, "failed": 0, "skipped": 0, "cancelled": 0}
+	out := map[string]int{"queued": 0, "sending": 0, "sent": 0, "failed": 0, "skipped": 0, "cancelled": 0, "paused": 0}
 	rows, err := db.QueryContext(ctx, `SELECT status, COUNT(*) FROM gw_outbox WHERE `+where+` AND direct=0 GROUP BY status`, arg)
 	if err != nil {
 		return out
@@ -613,6 +784,11 @@ func (a *API) queueItem(w http.ResponseWriter, r *http.Request) {
 	}
 	err := a.m.db.QueryRowContext(r.Context(), `SELECT id, session, campaign, to_addr, status, error, wa_id, attempts, created_at, sent_at FROM gw_outbox WHERE id=?`,
 		r.PathValue("id")).Scan(&it.ID, &it.Session, &it.Campaign, &it.To, &it.Status, &it.Error, &it.WaID, &it.Attempts, &it.CreatedAt, &it.SentAt)
+	if err == nil {
+		if s, e := a.m.get(it.Session); e == nil && !principalOf(r).Admin() && s.owner() != principalOf(r).UserID {
+			err = errNoSession
+		}
+	}
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "not_found", errors.New("queue item not found"))
 		return
@@ -621,13 +797,25 @@ func (a *API) queueItem(w http.ResponseWriter, r *http.Request) {
 		"to": it.To, "status": it.Status, "error": it.Error, "wa_id": it.WaID, "attempts": it.Attempts, "created_at": it.CreatedAt, "sent_at": it.SentAt}})
 }
 
-func (a *API) campaignStats(w http.ResponseWriter, r *http.Request) {
+func (a *API) campaignStatsByLabel(w http.ResponseWriter, r *http.Request) {
+	p := principalOf(r)
+	where, arg := "campaign=? AND owner_id="+strconv.FormatInt(p.UserID, 10), any(r.PathValue("campaign"))
+	if p.Admin() {
+		where = "campaign=?"
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "campaign": r.PathValue("campaign"),
-		"counts": statusCounts(r.Context(), a.m.db, "campaign=?", r.PathValue("campaign"))})
+		"counts": statusCounts(r.Context(), a.m.db, where, arg)})
 }
 
-func (a *API) cancelCampaign(w http.ResponseWriter, r *http.Request) {
-	res, err := a.m.db.ExecContext(r.Context(), `UPDATE gw_outbox SET status='cancelled' WHERE campaign=? AND status='queued'`, r.PathValue("campaign"))
+func (a *API) cancelCampaignByLabel(w http.ResponseWriter, r *http.Request) {
+	p := principalOf(r)
+	q := `UPDATE gw_outbox SET status='cancelled' WHERE campaign=? AND status='queued'`
+	args := []any{r.PathValue("campaign")}
+	if !p.Admin() {
+		q += ` AND owner_id=?`
+		args = append(args, p.UserID)
+	}
+	res, err := a.m.db.ExecContext(r.Context(), q, args...)
 	if err != nil {
 		a.fail(w, err)
 		return
@@ -878,7 +1066,15 @@ func (a *API) proxyTest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) listOptouts(w http.ResponseWriter, r *http.Request) {
-	rows, err := a.m.db.QueryContext(r.Context(), `SELECT phone, keyword, session, at FROM gw_optouts ORDER BY at DESC LIMIT 5000`)
+	p := principalOf(r)
+	q := `SELECT phone, keyword, session, at FROM gw_optouts`
+	var args []any
+	if !p.Admin() {
+		// Customers see opt-outs that came to their numbers, that they added, or that are in their contacts.
+		q += ` WHERE session IN (SELECT name FROM gw_sessions WHERE owner_id=?) OR session=? OR phone IN (SELECT phone FROM contacts WHERE owner_id=?)`
+		args = append(args, p.UserID, fmt.Sprintf("user:%d", p.UserID), p.UserID)
+	}
+	rows, err := a.m.db.QueryContext(r.Context(), q+` ORDER BY at DESC LIMIT 5000`, args...)
 	if err != nil {
 		a.fail(w, err)
 		return
@@ -909,8 +1105,8 @@ func (a *API) addOptouts(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
-		if _, err := a.m.db.ExecContext(r.Context(), `INSERT OR REPLACE INTO gw_optouts(phone, keyword, session, at) VALUES(?, 'manual', '', ?)`,
-			digitsOf(j.String()), time.Now().Unix()); err == nil {
+		if _, err := a.m.db.ExecContext(r.Context(), `INSERT OR REPLACE INTO gw_optouts(phone, keyword, session, at) VALUES(?, 'manual', ?, ?)`,
+			digitsOf(j.String()), fmt.Sprintf("user:%d", principalOf(r).UserID), time.Now().Unix()); err == nil {
 			added++
 			_, _ = a.m.db.ExecContext(r.Context(), `UPDATE gw_outbox SET status='skipped', error='opted_out' WHERE status='queued' AND to_addr=?`, j.String())
 		}
@@ -924,11 +1120,27 @@ func (a *API) removeOptout(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, err)
 		return
 	}
-	res, err := a.m.db.ExecContext(r.Context(), `DELETE FROM gw_optouts WHERE phone=?`, digitsOf(j.String()))
+	q := `DELETE FROM gw_optouts WHERE phone=?`
+	args := []any{digitsOf(j.String())}
+	if p := principalOf(r); !p.Admin() {
+		// Only opt-outs a customer added by hand, or that came to their own numbers.
+		q += ` AND (session=? OR session IN (SELECT name FROM gw_sessions WHERE owner_id=?))`
+		args = append(args, fmt.Sprintf("user:%d", p.UserID), p.UserID)
+	}
+	res, err := a.m.db.ExecContext(r.Context(), q, args...)
 	if err != nil {
 		a.fail(w, err)
 		return
 	}
 	n, _ := res.RowsAffected()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "removed": n})
+}
+
+func firstNonEmpty(v ...string) string {
+	for _, s := range v {
+		if strings.TrimSpace(s) != "" {
+			return s
+		}
+	}
+	return ""
 }

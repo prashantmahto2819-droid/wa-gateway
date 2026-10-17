@@ -1,0 +1,110 @@
+{{define "content"}}
+<header class="phead">
+  <div class="wrap">
+    <span class="kicker" lang="hi">साफ़ दाम, कोई छुपा चार्ज नहीं</span>
+    <h1>Pricing</h1>
+    <p class="lede">Pay monthly for the numbers and messages you use. No per-message fees from us, no setup charge.</p>
+  </div>
+</header>
+
+<section class="section" aria-labelledby="plans-title">
+  <div class="wrap">
+    <h2 id="plans-title" class="sr">Plans</h2>
+    {{if .Plans}}
+    <div class="plans">
+      {{range .Plans}}
+      <article class="plan{{if .highlight}} plan--hi{{end}}">
+        {{if .highlight}}<span class="plan__badge">Most popular</span>{{end}}
+        <h3>{{.name}}</h3>
+        <p class="plan__desc">{{.description}}</p>
+        <p class="plan__price"><b>{{money .price .currency}}</b>{{if .price}}<span class="plan__per">/ {{if eq .period_days 30}}month{{else}}{{.period_days}} days{{end}}</span>{{end}}</p>
+        {{if .trial}}<p class="plan__trial">Trial plan · {{.period_days}} days</p>{{end}}
+        <ul class="plan__list">
+          <li>{{num .max_numbers}} WhatsApp number{{if ne .max_numbers 1}}s{{end}}</li>
+          <li>Up to {{num .daily_limit}} messages a day per number</li>
+          <li>{{num .monthly_messages}} messages a month</li>
+          <li>{{num .max_contacts}} contacts</li>
+          <li>{{num .storage_mb}} MB media storage</li>
+          <li{{if not (index .features "campaigns")}} class="is-off"{{end}}>Bulk campaigns</li>
+          <li{{if not (index .features "scheduler")}} class="is-off"{{end}}>Scheduler &amp; repeats</li>
+          <li{{if not (index .features "autoreply")}} class="is-off"{{end}}>Auto-replies</li>
+          <li{{if not (index .features "groups")}} class="is-off"{{end}}>Groups &amp; channels</li>
+          <li{{if not (index .features "pool")}} class="is-off"{{end}}>Number pool rotation</li>
+          <li{{if not (index .features "api")}} class="is-off"{{end}}>REST API</li>
+        </ul>
+        {{if $.LoggedIn}}<a class="btn {{if .highlight}}btn--signal{{else}}btn--deep{{end}} btn--block" href="/app">Open dashboard</a>
+        {{else if $.SignupOpen}}<a class="btn {{if .highlight}}btn--signal{{else}}btn--deep{{end}} btn--block" href="/signup">Start free trial</a>
+        {{else}}<a class="btn {{if .highlight}}btn--signal{{else}}btn--deep{{end}} btn--block" href="/contact">Talk to us</a>{{end}}
+      </article>
+      {{end}}
+      <article class="plan plan--self">
+        <h3>Self-hosted licence</h3>
+        <p class="plan__desc">Install Vivid Relay on your own server. Your data never leaves your machine.</p>
+        <p class="plan__price"><b style="font-size:2rem">Custom</b></p>
+        <ul class="plan__list">
+          <li>Licence key for your own domain</li>
+          <li>One-command install on a 1–2 GB VPS</li>
+          <li>All features, limits set by licence</li>
+          <li>Updates with one command</li>
+          <li>Setup help over WhatsApp or call</li>
+        </ul>
+        <a class="btn btn--ghost btn--block" href="/contact">Ask for a licence</a>
+      </article>
+    </div>
+    <p class="note">Prices exclude GST. {{with .Settings.payment_note}}{{.}}{{end}}</p>
+    {{else}}
+    <div class="empty">
+      <h3>Pricing that fits your volume</h3>
+      <p class="muted">Tell us how many numbers and messages you need and we’ll send a plan within a working day. Self-hosted licences are also available.</p>
+      <a class="btn btn--deep" href="/contact">Contact us for pricing</a>
+      {{with .Settings.payment_note}}<p class="note">{{.}}</p>{{end}}
+    </div>
+    {{end}}
+  </div>
+</section>
+
+{{if .Plans}}
+<section class="section section--tint" aria-labelledby="cmp-title">
+  <div class="wrap">
+    <div class="head"><h2 id="cmp-title">Compare plans</h2><p class="lede">Every limit and feature, side by side.</p></div>
+    <div class="table-wrap" role="region" aria-labelledby="cmp-title" tabindex="0">
+      <table class="compare">
+        <thead><tr><th scope="col"><span class="sr">Feature</span></th>{{range .Plans}}<th scope="col">{{.name}}</th>{{end}}</tr></thead>
+        <tbody>
+          <tr><th scope="row">Price</th>{{range .Plans}}<td>{{money .price .currency}}{{if .price}} / {{.period_days}} days{{end}}</td>{{end}}</tr>
+          <tr><th scope="row">WhatsApp numbers</th>{{range .Plans}}<td>{{num .max_numbers}}</td>{{end}}</tr>
+          <tr><th scope="row">Daily limit per number</th>{{range .Plans}}<td>{{num .daily_limit}}</td>{{end}}</tr>
+          <tr><th scope="row">Messages a month</th>{{range .Plans}}<td>{{num .monthly_messages}}</td>{{end}}</tr>
+          <tr><th scope="row">Contacts</th>{{range .Plans}}<td>{{num .max_contacts}}</td>{{end}}</tr>
+          <tr><th scope="row">Media storage</th>{{range .Plans}}<td>{{num .storage_mb}} MB</td>{{end}}</tr>
+          <tr><th scope="row">Bulk campaigns</th>{{range .Plans}}<td>{{if index .features "campaigns"}}<span class="yes">Yes</span>{{else}}<span class="no">No</span>{{end}}</td>{{end}}</tr>
+          <tr><th scope="row">Scheduler &amp; repeats</th>{{range .Plans}}<td>{{if index .features "scheduler"}}<span class="yes">Yes</span>{{else}}<span class="no">No</span>{{end}}</td>{{end}}</tr>
+          <tr><th scope="row">Auto-replies</th>{{range .Plans}}<td>{{if index .features "autoreply"}}<span class="yes">Yes</span>{{else}}<span class="no">No</span>{{end}}</td>{{end}}</tr>
+          <tr><th scope="row">Polls &amp; menus</th>{{range .Plans}}<td>{{if index .features "polls"}}<span class="yes">Yes</span>{{else}}<span class="no">No</span>{{end}}</td>{{end}}</tr>
+          <tr><th scope="row">Groups &amp; channels</th>{{range .Plans}}<td>{{if index .features "groups"}}<span class="yes">Yes</span>{{else}}<span class="no">No</span>{{end}}</td>{{end}}</tr>
+          <tr><th scope="row">Status posting</th>{{range .Plans}}<td>{{if index .features "status"}}<span class="yes">Yes</span>{{else}}<span class="no">No</span>{{end}}</td>{{end}}</tr>
+          <tr><th scope="row">Number pool rotation</th>{{range .Plans}}<td>{{if index .features "pool"}}<span class="yes">Yes</span>{{else}}<span class="no">No</span>{{end}}</td>{{end}}</tr>
+          <tr><th scope="row">REST API &amp; keys</th>{{range .Plans}}<td>{{if index .features "api"}}<span class="yes">Yes</span>{{else}}<span class="no">No</span>{{end}}</td>{{end}}</tr>
+          <tr><th scope="row">Webhooks</th>{{range .Plans}}<td>{{if index .features "webhooks"}}<span class="yes">Yes</span>{{else}}<span class="no">No</span>{{end}}</td>{{end}}</tr>
+          <tr><th scope="row">Anti-ban guards &amp; STOP handling</th>{{range .Plans}}<td><span class="yes">Yes</span></td>{{end}}</tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">Prices exclude GST. Limits reset with each billing period. Anti-ban guards lower the risk of restrictions; they can’t guarantee none.</p>
+  </div>
+</section>
+{{end}}
+
+<section class="section" aria-labelledby="pfaq-title">
+  <div class="wrap">
+    <div class="head center"><h2 id="pfaq-title">Billing questions</h2></div>
+    <div class="faq">
+      <details><summary>Do you charge per message?</summary><p>No. Your plan includes a monthly message allowance. Meta does not bill you either, because Vivid Relay is not the official Business API.</p></details>
+      <details><summary>Is GST included?</summary><p>No, prices exclude GST. Your invoice shows GST separately{{with .Settings.gstin}} under our GSTIN {{.}}{{end}}.</p></details>
+      <details><summary>How do I pay?</summary><p>{{with .Settings.payment_note}}{{.}}{{else}}UPI, bank transfer or card. Contact us and we’ll share the details.{{end}}</p></details>
+      <details><summary>Can I change plans later?</summary><p>Yes. Upgrade any time and the new limits apply right away. Write to us to downgrade at the end of your period.</p></details>
+      <details><summary>What if it doesn’t work for me?</summary><p>First purchases are refundable within 7 days. See the <a href="/refund">refund policy</a> for the details.</p></details>
+    </div>
+  </div>
+</section>
+{{end}}

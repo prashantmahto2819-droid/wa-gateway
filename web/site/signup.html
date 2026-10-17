@@ -1,0 +1,38 @@
+{{define "content"}}
+<div class="auth">
+  <section class="auth__main" aria-labelledby="signup-title">
+    <div class="auth__box">
+      {{if .SignupOpen}}
+      <h1 id="signup-title">Start your free trial</h1>
+      <p class="lede">No card needed. Link a number and send your first message in minutes.</p>
+      <form class="form" data-api="/auth/signup" data-redirect="/app" novalidate>
+        <div class="field"><label for="s-name">Your name</label><input id="s-name" name="name" autocomplete="name" required maxlength="120"></div>
+        <div class="field"><label for="s-email">Work email</label><input id="s-email" name="email" type="email" autocomplete="email" required></div>
+        <div class="field"><label for="s-phone">Mobile number</label><input id="s-phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" required maxlength="20" placeholder="98765 43210"></div>
+        <div class="field"><label for="s-pass">Password</label><div class="pw"><input id="s-pass" name="password" type="password" autocomplete="new-password" required minlength="8" aria-describedby="s-pass-hint"><button type="button" data-pw-toggle aria-pressed="false" aria-controls="s-pass">Show</button></div><span class="hint" id="s-pass-hint">At least 8 characters.</span></div>
+        <button class="btn btn--signal btn--lg btn--block" type="submit" data-busy="Creating your account…">Create account</button>
+        <p class="form__msg" role="alert" aria-live="assertive"></p>
+        <p class="hint muted" style="margin:0;font-size:.86rem">By creating an account you agree to our <a href="/terms">terms</a> and <a href="/privacy">privacy policy</a>, and to message only people who have agreed to hear from you.</p>
+      </form>
+      {{else}}
+      <h1 id="signup-title">Signups are closed right now</h1>
+      <p class="lede">We’re onboarding new customers personally. Tell us what you need and we’ll set up your account.</p>
+      <p><a class="btn btn--deep btn--lg" href="/contact">Contact us</a></p>
+      {{end}}
+      <p class="auth__alt">Already have an account? <a href="/login">Log in</a></p>
+    </div>
+  </section>
+  <aside class="auth__side" aria-hidden="true">
+    <div class="hero__mesh"></div>
+    <div>
+      <p class="hi" lang="hi">संदेश, सही समय पर।</p>
+      <h2>Send like a person, at the scale of a business</h2>
+    </div>
+    <div class="auth__feed">
+      <div class="bub bub--out">Namaste Asha ji, your order #2041 is out for delivery today.<div class="bub__meta">11:02 <svg class="ticks is-read" viewBox="0 0 16 10"><path d="M1 5.5l3 3L10 1.5M6.5 8.5l1 0L15 1.5"/></svg></div></div>
+      <div class="bub bub--in">Thank you! 🙏<div class="bub__meta">11:05</div></div>
+      <div class="bub bub--out">Reply STOP any time to stop updates.<div class="bub__meta">11:05 <svg class="ticks is-read" viewBox="0 0 16 10"><path d="M1 5.5l3 3L10 1.5M6.5 8.5l1 0L15 1.5"/></svg></div></div>
+    </div>
+  </aside>
+</div>
+{{end}}
