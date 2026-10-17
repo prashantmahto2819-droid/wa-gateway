@@ -1,4 +1,6 @@
-# WA Gateway
+# Vivid Relay
+
+_VividBrandify का WhatsApp gateway — repo: wa-gateway_
 
 अपना छोटा, हल्का WhatsApp gateway — एक या ज़्यादा WhatsApp नंबर QR से जोड़िए, website से मैसेज भेजिए, और आने वाले मैसेज सीधे website पर पाइए।
 

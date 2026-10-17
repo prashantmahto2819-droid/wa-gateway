@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# WA Gateway one-command installer for a fresh Ubuntu/Debian VPS.
+# Vivid Relay one-command installer for a fresh Ubuntu/Debian VPS.
 #   git clone https://github.com/prashantmahto2819-droid/wa-gateway.git
 #   cd wa-gateway && sudo ./install.sh wa.yourdomain.com
 set -euo pipefail
@@ -60,7 +60,7 @@ done
 API_KEY="$(grep -E '^API_KEY=' .env | cut -d= -f2-)"
 cat <<EOF
 
-✅ WA Gateway चालू है!
+✅ Vivid Relay चालू है!
 
   Dashboard : https://${DOMAIN}/
   API key   : ${API_KEY}

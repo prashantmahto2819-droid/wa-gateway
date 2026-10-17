@@ -48,7 +48,7 @@ func loadConfig() (*Config, error) {
 		Port:               env("PORT", "8080"),
 		DataDir:            env("DATA_DIR", "./data"),
 		APIKey:             os.Getenv("API_KEY"),
-		DeviceName:         env("DEVICE_NAME", "WA Gateway"),
+		DeviceName:         env("DEVICE_NAME", "Vivid Relay"),
 		WebhookURL:         os.Getenv("WEBHOOK_URL"),
 		WebhookSecret:      os.Getenv("WEBHOOK_SECRET"),
 		DefaultCountryCode: strings.TrimPrefix(env("DEFAULT_COUNTRY_CODE", "91"), "+"),

@@ -219,7 +219,7 @@ func fetchURL(ctx context.Context, raw string, maxBytes int64, allowPrivate bool
 	if err != nil {
 		return nil, "", "", err
 	}
-	req.Header.Set("User-Agent", "wa-gateway/1.0")
+	req.Header.Set("User-Agent", "vivid-relay/1.0")
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, "", "", fmt.Errorf("could not download media: %w", err)

@@ -1,4 +1,4 @@
-// WA Gateway: a small self-hosted WhatsApp gateway built on whatsmeow.
+// Vivid Relay: a small self-hosted WhatsApp gateway built on whatsmeow.
 // It links one or more WhatsApp numbers (like WhatsApp Web), sends
 // messages for your website through a safe queue, and forwards incoming
 // messages to your website by webhook. No chat history or media is stored.
@@ -68,7 +68,7 @@ func main() {
 		IdleTimeout:       2 * time.Minute,
 	}
 	go func() {
-		log.Info("WA Gateway started", "version", version, "port", cfg.Port)
+		log.Info("Vivid Relay started", "version", version, "port", cfg.Port)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Error("http server", "err", err)
 			stop()

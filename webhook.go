@@ -114,7 +114,7 @@ func (w *Webhooks) post(ctx context.Context, job webhookJob) error {
 	}
 	ts := strconv.FormatInt(time.Now().Unix(), 10)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "wa-gateway/1.0")
+	req.Header.Set("User-Agent", "vivid-relay/1.0")
 	req.Header.Set("X-Event", job.evt)
 	req.Header.Set("X-Timestamp", ts)
 	if w.secret != "" {
