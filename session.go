@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +28,7 @@ const (
 	StLoggedOut    = "logged_out"   // removed from phone's Linked Devices; link again
 	StReplaced     = "replaced"     // same login opened elsewhere (two gateways running?)
 	StBanned       = "temp_banned"  // WhatsApp temporary ban
+	StOutdated     = "outdated"     // WhatsApp wants a newer version: run ./update.sh --whatsmeow
 )
 
 var (
@@ -46,6 +49,8 @@ type Session struct {
 	status     string
 	qrCode     string
 	pairCancel context.CancelFunc
+	pairCli    *whatsmeow.Client // client of the running QR flow
+	pairStart  time.Time
 	lastErr    string
 	banUntil   time.Time
 	pushName   string
@@ -53,14 +58,18 @@ type Session struct {
 	sendMu     sync.Mutex // one WhatsApp send at a time per number
 	lastSend   time.Time
 	onlineStop *time.Timer
+	onlineGen  int
 
 	checkMu     sync.Mutex
 	checkCount  int
 	checkWindow time.Time
 
-	wake  chan struct{}
-	rnd   *rand.Rand
-	rndMu sync.Mutex
+	lastHealth string
+
+	stopQueue context.CancelFunc
+	wake      chan struct{}
+	rnd       *rand.Rand
+	rndMu     sync.Mutex
 }
 
 func newSession(m *Manager, name string) *Session {
@@ -96,6 +105,9 @@ func (s *Session) setStatus(st, errMsg string) {
 	}
 	if st == StConnected {
 		s.poke()
+	}
+	if changed && (st == StLoggedOut || st == StReplaced || st == StBanned) {
+		go s.m.rebalance(s.name)
 	}
 }
 
@@ -133,8 +145,17 @@ func (s *Session) ready() (*whatsmeow.Client, error) {
 func (s *Session) newClient(dev *whatsmeowDevice) *whatsmeow.Client {
 	cli := whatsmeow.NewClient(dev, s.m.waLog.Sub(s.name))
 	cli.EnableAutoReconnect = true
+	cli.InitialAutoReconnect = true               // keep retrying even if the very first connect fails
 	cli.AutomaticMessageRerequestFromPhone = true // fixes most "waiting for this message"
-	cli.AddEventHandler(s.onEvent)
+	if p := s.row(s.m.ctx).proxy; p != "" {
+		if err := cli.SetProxyAddress(p); err != nil {
+			// Never fall back to the server's own IP silently.
+			s.m.log.Error("invalid proxy, connection will fail until it is fixed", "session", s.name, "err", err)
+			cli.SetProxy(func(*http.Request) (*url.URL, error) { return nil, fmt.Errorf("invalid proxy configured: %w", err) })
+		}
+	}
+	// Events from an old client (after reconnect / re-link) are ignored.
+	cli.AddEventHandler(func(evt any) { s.onEvent(cli, evt) })
 	return cli
 }
 
@@ -175,9 +196,7 @@ func (s *Session) startPairing() error {
 		s.mu.Unlock()
 		return nil
 	}
-	if s.client != nil {
-		s.client.Disconnect()
-	}
+	old := s.client
 	cli := s.newClient(s.m.container.NewDevice())
 	ctx, cancel := context.WithTimeout(s.m.ctx, 4*time.Minute)
 	qrChan, err := cli.GetQRChannel(ctx)
@@ -186,63 +205,91 @@ func (s *Session) startPairing() error {
 		s.mu.Unlock()
 		return err
 	}
-	s.client, s.pairCancel, s.qrCode = cli, cancel, ""
+	s.client, s.pairCancel, s.pairCli, s.pairStart, s.qrCode = cli, cancel, cli, time.Now(), ""
 	s.mu.Unlock()
+	if old != nil {
+		old.Disconnect()
+	}
 	s.setStatus(StQR, "")
 
 	if err := cli.Connect(); err != nil {
-		s.endPairing(cli)
-		s.setStatus(StQRExpired, err.Error())
+		s.failPairing(cli, err.Error())
 		return err
 	}
 	go func() {
-		defer s.endPairing(cli)
 		for item := range qrChan {
 			switch item.Event {
 			case whatsmeow.QRChannelEventCode:
 				s.mu.Lock()
-				s.qrCode = item.Code
+				if s.pairCli == cli {
+					s.qrCode = item.Code
+				}
 				s.mu.Unlock()
 			case whatsmeow.QRChannelSuccess.Event:
+				s.endPairing(cli)
 				s.setStatus(StConnecting, "")
 				return
-			default:
+			case whatsmeow.QRChannelTimeout.Event, whatsmeow.QRChannelEventError,
+				whatsmeow.QRChannelErrUnexpectedEvent.Event, whatsmeow.QRChannelClientOutdated.Event:
 				msg := item.Event
 				if item.Error != nil {
 					msg += ": " + item.Error.Error()
 				}
-				cli.Disconnect()
-				s.mu.Lock()
-				if s.client == cli {
-					s.client = nil
-				}
-				s.mu.Unlock()
-				s.setStatus(StQRExpired, msg)
+				s.failPairing(cli, msg)
 				return
+			default:
+				// e.g. scanned with an old phone app, passkey prompts: not final, keep waiting.
+				s.m.log.Info("pairing notice", "session", s.name, "event", item.Event)
 			}
 		}
+		s.failPairing(cli, "QR closed")
 	}()
 	return nil
 }
 
+// endPairing stops the QR flow of this client (no-op if a newer flow started).
 func (s *Session) endPairing(cli *whatsmeow.Client) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.client == cli && s.pairCancel != nil {
-		s.pairCancel()
-		s.pairCancel = nil
+	if s.pairCli != cli {
+		return
 	}
-	s.qrCode = ""
+	if s.pairCancel != nil {
+		s.pairCancel()
+	}
+	s.pairCancel, s.pairCli, s.qrCode = nil, nil, ""
+}
+
+func (s *Session) failPairing(cli *whatsmeow.Client, msg string) {
+	s.mu.Lock()
+	current := s.pairCli == cli
+	s.mu.Unlock()
+	if !current {
+		return
+	}
+	s.endPairing(cli)
+	cli.Disconnect()
+	s.mu.Lock()
+	if s.client == cli && cli.Store.ID == nil {
+		s.client = nil
+	}
+	s.mu.Unlock()
+	s.setStatus(StQRExpired, msg)
 }
 
 // pairCode links with an 8-character code typed on the phone instead of scanning.
 func (s *Session) pairCode(ctx context.Context, phone string) (string, error) {
-	digits := nonDigits.ReplaceAllString(phone, "")
-	if len(digits) == 10 {
-		digits = s.m.cfg.DefaultCountryCode + digits
-	}
-	if len(digits) < 8 {
+	jid, err := parseTarget(phone, s.m.cfg.DefaultCountryCode)
+	if err != nil || jid.Server != types.DefaultUserServer {
 		return "", errors.New("invalid phone number")
+	}
+	// A QR flow only lives ~160s; start a fresh one so the code has time to be typed.
+	s.mu.Lock()
+	stale := s.pairCli != nil && time.Since(s.pairStart) > 45*time.Second
+	cli := s.pairCli
+	s.mu.Unlock()
+	if stale {
+		s.failPairing(cli, "restarting for pairing code")
 	}
 	if err := s.startPairing(); err != nil {
 		return "", err
@@ -251,10 +298,10 @@ func (s *Session) pairCode(ctx context.Context, phone string) (string, error) {
 	deadline := time.Now().Add(20 * time.Second)
 	for {
 		s.mu.Lock()
-		cli, ready := s.client, s.qrCode != ""
+		cli, ready := s.pairCli, s.qrCode != ""
 		s.mu.Unlock()
 		if ready && cli != nil {
-			return cli.PairPhone(ctx, digits, true, whatsmeow.PairClientChrome, "Chrome (Linux)")
+			return cli.PairPhone(ctx, jid.User, true, whatsmeow.PairClientChrome, "Chrome (Linux)")
 		}
 		if time.Now().After(deadline) {
 			return "", errors.New("could not reach WhatsApp to request a pairing code, try again")
@@ -278,8 +325,8 @@ func (s *Session) logout(ctx context.Context) {
 	s.client = nil
 	if s.pairCancel != nil {
 		s.pairCancel()
-		s.pairCancel = nil
 	}
+	s.pairCancel, s.pairCli, s.qrCode = nil, nil, ""
 	s.mu.Unlock()
 	if cli != nil {
 		if cli.Store.ID != nil {
@@ -308,8 +355,14 @@ func (s *Session) close() {
 
 // ---------- WhatsApp events ----------
 
-func (s *Session) onEvent(evt any) {
+func (s *Session) onEvent(from *whatsmeow.Client, evt any) {
 	ctx := s.m.ctx
+	s.mu.Lock()
+	current := s.client == from
+	s.mu.Unlock()
+	if !current {
+		return
+	}
 	switch e := evt.(type) {
 	case *events.PairSuccess:
 		_, _ = s.m.db.ExecContext(ctx, `UPDATE gw_sessions SET jid=?, paired_at=?, timelock_until=0 WHERE name=?`,
@@ -318,9 +371,8 @@ func (s *Session) onEvent(evt any) {
 	case *events.Connected:
 		s.mu.Lock()
 		s.lastErr = ""
-		cli := s.client
 		s.mu.Unlock()
-		if cli != nil {
+		if cli := from; cli != nil {
 			// "unavailable" keeps notifications ringing on the owner's phone.
 			_ = cli.SendPresence(ctx, types.PresenceUnavailable)
 			if cli.Store.PushName != "" {
@@ -357,7 +409,7 @@ func (s *Session) onEvent(evt any) {
 	case *events.ConnectFailure:
 		s.setStatus(StDisconnected, fmt.Sprintf("connect failure: %v %s", e.Reason, e.Message))
 	case *events.ClientOutdated:
-		s.setStatus(StDisconnected, "WhatsApp says this gateway version is outdated: update the gateway (docker compose pull / rebuild)")
+		s.setStatus(StOutdated, "WhatsApp says this gateway version is outdated: update the gateway (docker compose pull / rebuild)")
 	case *events.NotifyAccountReachoutTimelock:
 		until := int64(0)
 		if e.IsActive {
@@ -387,6 +439,12 @@ func (s *Session) kick() {
 	s.m.log.Warn("keep-alive failing, reconnecting", "session", s.name)
 	cli.Disconnect()
 	time.Sleep(2 * time.Second)
+	s.mu.Lock()
+	still := s.client == cli
+	s.mu.Unlock()
+	if !still {
+		return // a manual reconnect / re-link replaced it meanwhile
+	}
 	if err := cli.Connect(); err != nil {
 		s.setStatus(StDisconnected, err.Error())
 	}
@@ -465,6 +523,11 @@ func (s *Session) onMessage(ctx context.Context, e *events.Message) {
 	content := extractContent(e.Message)
 	if content == nil {
 		return
+	}
+	if !info.IsFromMe && !info.IsGroup && chat.Server != types.NewsletterServer && content["type"] == "text" {
+		if t, _ := content["text"].(string); t != "" {
+			s.handleKeyword(ctx, chatPN, t)
+		}
 	}
 	if content["type"] == "revoke" {
 		s.hook("message.deleted", map[string]any{"id": content["id"], "chat": chat.String(), "chat_phone": phoneOf(chatPN), "from_me": info.IsFromMe})

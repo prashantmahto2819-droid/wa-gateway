@@ -52,13 +52,16 @@ type sessionRow struct {
 	paused        bool
 	pairedAt      int64
 	timelockUntil int64
+	proxy         string
+	pauseReason   string
+	healthSince   int64
 }
 
 func (s *Session) row(ctx context.Context) sessionRow {
 	var r sessionRow
 	var paused int
-	_ = s.m.db.QueryRowContext(ctx, `SELECT jid, paused, paired_at, timelock_until FROM gw_sessions WHERE name=?`, s.name).
-		Scan(&r.jid, &paused, &r.pairedAt, &r.timelockUntil)
+	_ = s.m.db.QueryRowContext(ctx, `SELECT jid, paused, paired_at, timelock_until, proxy, pause_reason, health_since FROM gw_sessions WHERE name=?`, s.name).
+		Scan(&r.jid, &paused, &r.pairedAt, &r.timelockUntil, &r.proxy, &r.pauseReason, &r.healthSince)
 	r.paused = paused == 1
 	return r
 }
@@ -80,7 +83,7 @@ func (s *Session) timelocked(r sessionRow) bool {
 }
 
 // checkLimits says whether one more message is allowed right now.
-func (s *Session) checkLimits(ctx context.Context, r sessionRow, newContact bool) error {
+func (s *Session) checkLimits(ctx context.Context, r sessionRow, newContact, slow bool) error {
 	now := time.Now()
 	sent, err := countSentSince(ctx, s.m.db, s.name, dayStart(now), false)
 	if err != nil {
@@ -97,7 +100,11 @@ func (s *Session) checkLimits(ctx context.Context, r sessionRow, newContact bool
 		if err != nil {
 			return err
 		}
-		if n >= s.m.cfg.NewContactLimit {
+		limit := s.m.cfg.NewContactLimit
+		if slow {
+			limit /= 2
+		}
+		if n >= limit {
 			return errNewLimit
 		}
 	}
@@ -106,10 +113,9 @@ func (s *Session) checkLimits(ctx context.Context, r sessionRow, newContact bool
 
 // ---------- recipient resolution ----------
 
-// resolve parses the target and, for phone numbers we never talked to,
-// verifies the number is on WhatsApp (cached for 30 days). Sending to
-// numbers that aren't on WhatsApp is a known ban signal.
-func (s *Session) resolve(ctx context.Context, cli *whatsmeow.Client, raw string) (types.JID, bool, error) {
+// classify parses the target and says whether this person is new to us
+// (never wrote to this number). It does not touch the network.
+func (s *Session) classify(ctx context.Context, cli *whatsmeow.Client, raw string) (types.JID, bool, error) {
 	to, err := parseTarget(raw, s.m.cfg.DefaultCountryCode)
 	if err != nil {
 		return to, false, err
@@ -117,23 +123,31 @@ func (s *Session) resolve(ctx context.Context, cli *whatsmeow.Client, raw string
 	if to.Server != types.DefaultUserServer && to.Server != types.HiddenUserServer {
 		return to, false, nil // groups and channels
 	}
-	known := isKnownContact(ctx, s.m.db, s.name, to.String())
-	if !known {
-		if alt, err := cli.Store.GetAltJID(ctx, to); err == nil && !alt.IsEmpty() {
-			known = isKnownContact(ctx, s.m.db, s.name, alt.ToNonAD().String())
-		}
+	if isKnownContact(ctx, s.m.db, s.name, to.String()) {
+		return to, false, nil
 	}
-	if known || to.Server == types.HiddenUserServer {
-		return to, !known, nil
+	if alt, err := cli.Store.GetAltJID(ctx, to); err == nil && !alt.IsEmpty() &&
+		isKnownContact(ctx, s.m.db, s.name, alt.ToNonAD().String()) {
+		return to, false, nil
+	}
+	return to, true, nil
+}
+
+// verifyNumber checks a new phone number is on WhatsApp before the first
+// message (cached 30 days). It runs only after the limits allow sending,
+// because mass number lookups are themselves a ban signal.
+func (s *Session) verifyNumber(ctx context.Context, cli *whatsmeow.Client, to types.JID) (types.JID, error) {
+	if to.Server != types.DefaultUserServer {
+		return to, nil
 	}
 	var isIn int
 	var jidStr string
-	err = s.m.db.QueryRowContext(ctx, `SELECT is_in, jid FROM gw_numbers WHERE phone=? AND checked_at>?`,
+	err := s.m.db.QueryRowContext(ctx, `SELECT is_in, jid FROM gw_numbers WHERE phone=? AND checked_at>?`,
 		to.User, time.Now().AddDate(0, 0, -30).Unix()).Scan(&isIn, &jidStr)
 	if errors.Is(err, sql.ErrNoRows) {
 		res, err := cli.IsOnWhatsApp(ctx, []string{"+" + to.User})
 		if err != nil {
-			return to, true, err
+			return to, err
 		}
 		isIn = 0
 		if len(res) > 0 && res[0].IsIn {
@@ -142,21 +156,22 @@ func (s *Session) resolve(ctx context.Context, cli *whatsmeow.Client, raw string
 		_, _ = s.m.db.ExecContext(ctx, `INSERT OR REPLACE INTO gw_numbers(phone,jid,is_in,checked_at) VALUES(?,?,?,?)`,
 			to.User, jidStr, isIn, time.Now().Unix())
 	} else if err != nil {
-		return to, true, err
+		return to, err
 	}
 	if isIn == 0 {
-		return to, true, errNotOnWA
+		return to, errNotOnWA
 	}
 	if j, err := types.ParseJID(jidStr); err == nil && !j.IsEmpty() {
 		to = j.ToNonAD()
 	}
-	return to, true, nil
+	return to, nil
 }
 
 // ---------- the actual send ----------
 
 type sendOpts struct {
 	direct bool // API call (not queue): enforce DIRECT_GAP and record a row
+	slow   bool // health guard: half the new-contact allowance
 }
 
 func (s *Session) send(ctx context.Context, req *SendRequest, opts sendOpts) (*SendResult, error) {
@@ -167,13 +182,18 @@ func (s *Session) send(ctx context.Context, req *SendRequest, opts sendOpts) (*S
 	if err != nil {
 		return nil, err
 	}
-	to, newContact, err := s.resolve(ctx, cli, req.To)
+	to, newContact, err := s.classify(ctx, cli, req.To)
 	if err != nil {
 		return &SendResult{To: to.String(), NewContact: newContact}, err
 	}
 	r := s.row(ctx)
-	if err := s.checkLimits(ctx, r, newContact); err != nil {
+	if err := s.checkLimits(ctx, r, newContact, opts.slow); err != nil {
 		return &SendResult{To: to.String(), NewContact: newContact}, err
+	}
+	if newContact {
+		if to, err = s.verifyNumber(ctx, cli, to); err != nil {
+			return &SendResult{To: to.String(), NewContact: newContact}, err
+		}
 	}
 
 	s.rndMu.Lock()
@@ -245,21 +265,29 @@ func (s *Session) send(ctx context.Context, req *SendRequest, opts sendOpts) (*S
 // "unavailable" after a minute of quiet (so the phone keeps notifying).
 func (s *Session) goOnline(ctx context.Context, cli *whatsmeow.Client) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.onlineStop == nil {
-		_ = cli.SendPresence(ctx, types.PresenceAvailable)
-		s.onlineStop = time.AfterFunc(time.Minute, func() {
-			s.mu.Lock()
-			s.onlineStop = nil
-			c := s.client
-			s.mu.Unlock()
-			if c != nil && c.IsConnected() {
-				_ = c.SendPresence(context.Background(), types.PresenceUnavailable)
-			}
-		})
-		return
+	s.onlineGen++
+	gen := s.onlineGen
+	first := s.onlineStop == nil
+	if !first {
+		s.onlineStop.Stop()
 	}
-	s.onlineStop.Reset(time.Minute)
+	s.onlineStop = time.AfterFunc(time.Minute, func() {
+		s.mu.Lock()
+		if s.onlineGen != gen { // a newer send extended the online time
+			s.mu.Unlock()
+			return
+		}
+		s.onlineStop = nil
+		c := s.client
+		s.mu.Unlock()
+		if c != nil && c.IsConnected() {
+			_ = c.SendPresence(context.Background(), types.PresenceUnavailable)
+		}
+	})
+	s.mu.Unlock()
+	if first { // network call outside the lock
+		_ = cli.SendPresence(ctx, types.PresenceAvailable)
+	}
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) error {
@@ -275,7 +303,13 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 
 // recordDirect stores direct sends so daily limits count them too.
 func (s *Session) recordDirect(ctx context.Context, req *SendRequest, res *SendResult, sendErr error) int64 {
-	payload, _ := json.Marshal(req)
+	logged := *req
+	if req.Media != nil && req.Media.Base64 != "" { // never keep file contents
+		m := *req.Media
+		m.Base64 = "(omitted)"
+		logged.Media = &m
+	}
+	payload, _ := json.Marshal(&logged)
 	status, errMsg, waID, to, nc := "sent", "", "", req.To, 0
 	if res != nil {
 		waID, nc = res.ID, b2i(res.NewContact)
@@ -358,13 +392,19 @@ func (s *Session) queueStep(ctx context.Context, batch *int) time.Duration {
 	if sent >= s.dailyLimit(r.pairedAt) {
 		return time.Until(dayStart(now).Add(24*time.Hour)) + time.Minute
 	}
+	h := s.health(ctx, r)
+	s.applyHealth(ctx, h)
+	if h.State == "paused" {
+		return 5 * time.Minute
+	}
+	slow := h.State == "slow"
 
 	var id int64
 	var attempts int
-	var payload, campaign string
-	err := s.m.db.QueryRowContext(ctx, `SELECT id, payload, campaign, attempts FROM gw_outbox
-		WHERE session=? AND status='queued' AND not_before<=? ORDER BY id LIMIT 1`, s.name, now.Unix()).
-		Scan(&id, &payload, &campaign, &attempts)
+	var payload, campaign, toAddr string
+	err := s.m.db.QueryRowContext(ctx, `SELECT id, payload, campaign, attempts, to_addr FROM gw_outbox
+		WHERE session=? AND status='queued' AND not_before<=? ORDER BY priority DESC, id LIMIT 1`, s.name, now.Unix()).
+		Scan(&id, &payload, &campaign, &attempts, &toAddr)
 	if errors.Is(err, sql.ErrNoRows) {
 		*batch = 0
 		return 5 * time.Minute // woken early by new messages
@@ -378,39 +418,57 @@ func (s *Session) queueStep(ctx context.Context, batch *int) time.Duration {
 		s.finish(ctx, id, campaign, "failed", "bad payload", nil)
 		return 0
 	}
+	// People who said STOP, or already got enough campaign messages this week, are skipped.
+	if isOptedOut(ctx, s.m.db, toAddr) {
+		s.finish(ctx, id, campaign, "skipped", "opted_out", nil)
+		return 0
+	}
+	if cfg.PerContactWeekly > 0 && weeklyCount(ctx, s.m.db, toAddr) >= cfg.PerContactWeekly {
+		s.finish(ctx, id, campaign, "skipped", "weekly_limit", nil)
+		return 0
+	}
 	_, _ = s.m.db.ExecContext(ctx, `UPDATE gw_outbox SET status='sending', attempts=attempts+1 WHERE id=?`, id)
 
 	sctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
-	res, err := s.send(sctx, &req, sendOpts{})
+	res, err := s.send(sctx, &req, sendOpts{slow: slow})
 	cancel()
 
+	// Bookkeeping must survive a shutdown, or a sent message could be sent twice.
+	bctx := context.WithoutCancel(ctx)
 	switch {
 	case err == nil:
-		s.finish(ctx, id, campaign, "sent", "", res)
+		s.finish(bctx, id, campaign, "sent", "", res)
 	case errors.Is(err, errTimelocked), errors.Is(err, errNewLimit):
-		// Hold new-contact messages back; known contacts continue.
+		// Hold new-contact messages back (this one and every queued
+		// "never talked" row); known contacts keep going.
 		nb := dayStart(now).Add(24 * time.Hour)
 		if errors.Is(err, errTimelocked) {
-			nb = time.Unix(max(s.row(ctx).timelockUntil, now.Add(time.Hour).Unix()), 0)
+			nb = time.Unix(max(s.row(bctx).timelockUntil, now.Add(time.Hour).Unix()), 0)
 		}
-		_, _ = s.m.db.ExecContext(ctx, `UPDATE gw_outbox SET status='queued', attempts=attempts-1, not_before=?, error=? WHERE id=?`, nb.Unix(), err.Error(), id)
+		_, _ = s.m.db.ExecContext(bctx, `UPDATE gw_outbox SET status='queued', attempts=attempts-1, not_before=?, error=? WHERE id=?`, nb.Unix(), err.Error(), id)
+		_, _ = s.m.db.ExecContext(bctx, `UPDATE gw_outbox SET not_before=? WHERE session=? AND status='queued' AND priority=0 AND not_before<?`,
+			nb.Unix(), s.name, nb.Unix())
 		return time.Second
 	case errors.Is(err, errDailyLimit), errors.Is(err, errNotConnected), errors.Is(err, context.Canceled):
-		_, _ = s.m.db.ExecContext(ctx, `UPDATE gw_outbox SET status='queued', attempts=attempts-1 WHERE id=?`, id)
+		_, _ = s.m.db.ExecContext(bctx, `UPDATE gw_outbox SET status='queued', attempts=attempts-1 WHERE id=?`, id)
 		return time.Minute
 	case isPermanent(err) || attempts+1 >= 3:
-		s.finish(ctx, id, campaign, "failed", err.Error(), res)
+		s.finish(bctx, id, campaign, "failed", err.Error(), res)
 	default:
-		_, _ = s.m.db.ExecContext(ctx, `UPDATE gw_outbox SET status='queued', not_before=?, error=? WHERE id=?`,
+		_, _ = s.m.db.ExecContext(bctx, `UPDATE gw_outbox SET status='queued', not_before=?, error=? WHERE id=?`,
 			now.Add(3*time.Minute).Unix(), err.Error(), id)
 	}
 
+	factor := time.Duration(1)
+	if slow {
+		factor = 2
+	}
 	*batch++
 	if cfg.BatchSize > 0 && *batch >= cfg.BatchSize {
 		*batch = 0
-		return s.randDur(cfg.BatchPause, cfg.BatchPause+cfg.BatchPause/2)
+		return factor * s.randDur(cfg.BatchPause, cfg.BatchPause+cfg.BatchPause/2)
 	}
-	return s.randDur(cfg.MinDelay, cfg.MaxDelay)
+	return factor * s.randDur(cfg.MinDelay, cfg.MaxDelay)
 }
 
 func (s *Session) finish(ctx context.Context, id int64, campaign, status, errMsg string, res *SendResult) {

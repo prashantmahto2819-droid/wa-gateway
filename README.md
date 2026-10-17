@@ -46,7 +46,8 @@ Script Docker लगाता है, कम RAM हो तो swap बनात
 | GET | `/api/sessions` | सब नंबर + status + आज का हिसाब |
 | POST | `/api/sessions` | `{"name":"main","webhook_url":""}` नया session |
 | GET | `/api/sessions/{name}` | एक session |
-| PATCH | `/api/sessions/{name}` | `{"paused":true}` queue रोकें / `{"webhook_url":"..."}` |
+| PATCH | `/api/sessions/{name}` | `{"paused":true/false}` queue रोकें/चालू · `{"webhook_url":"..."}` · `{"proxy":"socks5://user:pass@host:port"}` (`""` = हटाएँ) |
+| POST | `/api/sessions/{name}/proxy-test` | `{"proxy":"..."}` (खाली = saved) → IP, देश, शहर, latency |
 | POST | `/api/sessions/{name}/qr` | QR शुरू करें; जवाब में `qr` और `qr_image` (PNG data URL) |
 | GET | `/api/sessions/{name}/qr` | ताज़ा QR (हर 3 सेकंड पूछें; QR बदलता रहता है) |
 | POST | `/api/sessions/{name}/pair-code` | `{"phone":"9876543210"}` → 8 अक्षर का code |
@@ -54,7 +55,7 @@ Script Docker लगाता है, कम RAM हो तो swap बनात
 | POST | `/api/sessions/{name}/reconnect` | दोबारा जोड़ें |
 | DELETE | `/api/sessions/{name}` | session पूरी तरह हटाएँ |
 
-Status: `new`, `qr`, `qr_expired`, `connecting`, `connected`, `disconnected` (अपने-आप जुड़ेगा), `logged_out` (फिर से QR), `replaced`, `temp_banned`.
+Status: `outdated` (`./update.sh --whatsmeow` चलाएँ), `new`, `qr`, `qr_expired`, `connecting`, `connected`, `disconnected` (अपने-आप जुड़ेगा), `logged_out` (फिर से QR), `replaced`, `temp_banned`.
 
 ### मैसेज भेजना — तुरंत (OTP-जैसे notice, desk reply)
 
@@ -99,6 +100,12 @@ Group में mention: `"text": "@919876543210 कृपया देखें
 
 या `"messages": [ {…}, {…} ]` (हर मैसेज अलग)। `{a|b|c}` में से हर बार एक शब्द random चुना जाता है ताकि सबको एक-सा मैसेज न जाए।
 
+- STOP कर चुके लोग और एक ही campaign में दोहराए गए नंबर अपने-आप हट जाते हैं (जवाब में `skipped_opted_out`, `skipped_duplicates`)।
+- Queue में media सिर्फ़ `url` से (base64 नहीं), ताकि फ़ाइल हर मैसेज के साथ save न हो।
+- जिन लोगों ने हाल में जवाब दिया, उन्हें सबसे पहले भेजा जाता है; अनजान लोगों को सबसे बाद।
+
+**कई नंबरों में बाँटें (number pool):** `POST /api/queue` with `"pool": ["main","second","third"]` (बाकी body वही)। हर व्यक्ति को वही नंबर भेजता है जिससे उसकी पहले बात हुई; नए लोग सबसे कम व्यस्त नंबर को मिलते हैं। कोई नंबर logout/ban हो जाए तो उसके बचे मैसेज अपने-आप बाकी नंबरों पर चले जाते हैं।
+
 | Method | Path | काम |
 |---|---|---|
 | GET | `/api/sessions/{name}/queue` | queued/sent/failed गिनती, आज की सीमा |
@@ -116,6 +123,9 @@ Group में mention: `"text": "@919876543210 कृपया देखें
 | POST | `/api/sessions/{name}/read` | `{"chat":"…","ids":["…"],"sender":"…"}` read mark |
 | POST | `/api/sessions/{name}/typing` | `{"to":"…","state":"composing"\|"paused"}` |
 | POST | `/api/sessions/{name}/check` | `{"numbers":["…"]}` (1–50, घंटे की सीमा) — WhatsApp पर है या नहीं |
+| GET | `/api/optouts` | STOP करने वालों की सूची |
+| POST | `/api/optouts` | `{"numbers":["…"]}` हाथ से opt-out जोड़ें |
+| DELETE | `/api/optouts/{phone}` | opt-out हटाएँ |
 | GET | `/health` | बिना key — uptime/monitoring के लिए |
 
 Error जवाब: `{"ok":false,"code":"…","error":"…"}` — मुख्य codes: `not_connected` (503), `not_on_whatsapp` (422), `timelocked` / `daily_limit` / `new_contact_limit` (429), `session_not_found` (404), `bad_request` (400).
@@ -139,6 +149,8 @@ Error जवाब: `{"ok":false,"code":"…","error":"…"}` — मुख्�
 | `session.status` | `status, error` |
 | `session.paired` | `jid, lid, business_name` |
 | `session.timelock` | `active, until` — WhatsApp ने नए contacts पर रोक लगाई |
+| `session.health` | `state (ok/slow/paused), fail_rate, reply_rate, reason` |
+| `contact.optout` / `contact.optin` | `phone, keyword` — किसी ने STOP / START लिखा |
 
 `type`: `text, image, video, audio, voice, document, sticker, location, contact, reaction, poll, button_reply, list_reply`. Media का सिर्फ़ विवरण आता है, file नहीं।
 
@@ -171,6 +183,10 @@ Gateway अपने-आप:
 - भेजने से पहले online + typing, reply से पहले read; बाद में offline ताकि फ़ोन पर notification आते रहें।
 - WhatsApp पर न होने वाले नंबर पहले ही छाँट देता है (30 दिन cache)।
 - Error 463/475 या timelock सूचना आते ही नए contacts को भेजना रोकता है; पुराने contacts को भेजना चलता रहता है।
+- **STOP/START:** कोई "STOP", "बंद करो", "band karo" आदि लिखे तो उसे फिर कभी campaign नहीं जाता (desk के जवाब जाते रहते हैं)। उसे पुष्टि का मैसेज भी जाता है।
+- **हर व्यक्ति की सीमा:** एक व्यक्ति को 7 दिन में अधिकतम 3 campaign मैसेज, सभी नंबर मिलाकर (`PER_CONTACT_WEEKLY_LIMIT`)।
+- **सेहत पर नज़र:** पिछले 3 दिन में 25% से ज़्यादा campaign मैसेज fail हों तो queue अपने-आप रुकती है। नए लोगों में से 3% से कम जवाब दें तो रफ़्तार आधी हो जाती है और नए लोगों की सीमा भी आधी। दोनों पर `session.health` webhook आता है; dashboard में "Queue चालू करें" दबाने पर हिसाब नए सिरे से शुरू होता है।
+- **Proxy (हर नंबर का अलग):** Dashboard → Proxy → पहले test होता है (IP, देश दिखेगा), फिर लगता है। Proxy बंद हो तो नंबर server के IP पर नहीं जाता, बस रुककर बताता है। भारतीय residential/mobile और हर नंबर का एक ही (sticky) proxy रखें; rotating या free proxy नहीं। Proxy सिर्फ़ कई नंबर एक server से चलाने में मदद करता है — बैन से बचाव ऊपर वाले नियमों से होता है।
 
 आप:
 - सिर्फ़ उन्हें भेजें जिन्होंने अनुमति दी/बात की। लोगों को पहले मैसेज करने दें (`wa.me/91XXXXXXXXXX?text=JOIN` link)।

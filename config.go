@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // Config holds all settings. Everything comes from environment variables
@@ -41,6 +42,20 @@ type Config struct {
 	TimelockPause      time.Duration // how long to pause new-contact sending after error 463
 	RetentionDays      int           // delete finished queue rows older than this
 	WebhookIncludeSelf bool          // also forward messages sent from the phone itself
+
+	// Opt-out: people who write STOP never get queued (campaign) messages again.
+	OptoutKeywords []string
+	OptinKeywords  []string
+	OptoutReply    string
+	OptinReply     string
+
+	PerContactWeekly int // max campaign (queue) messages to one person in 7 days
+	RecentReplyDays  int // people who wrote within this many days are sent first
+
+	// Health guard: auto-slow / auto-pause a number that looks unhealthy.
+	HealthMinSample int     // judge only after this many campaign sends in the window
+	HealthMaxFail   float64 // pause the queue if more than this share of sends fail
+	HealthMinReply  float64 // slow down if fewer than this share of new contacts reply
 }
 
 func loadConfig() (*Config, error) {
@@ -69,6 +84,18 @@ func loadConfig() (*Config, error) {
 		TimelockPause:      envDur("TIMELOCK_PAUSE", 6*time.Hour),
 		RetentionDays:      envInt("RETENTION_DAYS", 30),
 		WebhookIncludeSelf: envBool("WEBHOOK_INCLUDE_SELF", true),
+	}
+	c.OptoutKeywords = envList("OPTOUT_KEYWORDS", "stop,unsubscribe,stop karo,band karo,बंद,बंद करो,रोकें,मत भेजो")
+	c.OptinKeywords = envList("OPTIN_KEYWORDS", "start,subscribe,शुरू")
+	c.OptoutReply = env("OPTOUT_REPLY", "ठीक है, अब आपको ये संदेश नहीं भेजे जाएँगे। फिर से पाने के लिए START लिखें।")
+	c.OptinReply = env("OPTIN_REPLY", "धन्यवाद! आपको फिर से संदेश मिलेंगे।")
+	c.PerContactWeekly = envInt("PER_CONTACT_WEEKLY_LIMIT", 3)
+	c.RecentReplyDays = envInt("RECENT_REPLY_DAYS", 30)
+	c.HealthMinSample = envInt("HEALTH_MIN_SAMPLE", 30)
+	c.HealthMaxFail = envFloat("HEALTH_MAX_FAIL_RATE", 0.25)
+	c.HealthMinReply = envFloat("HEALTH_MIN_REPLY_RATE", 0.03)
+	if strings.Contains(c.APIKey, "change-me") {
+		return nil, fmt.Errorf("API_KEY is still the example value; set a long random key (install.sh does this)")
 	}
 	if len(c.APIKey) < 24 {
 		return nil, fmt.Errorf("API_KEY must be set and at least 24 characters long")
@@ -116,4 +143,45 @@ func envDur(k string, def time.Duration) time.Duration {
 		return time.Duration(n) * time.Second
 	}
 	return def
+}
+
+func envFloat(k string, def float64) float64 {
+	if v, err := strconv.ParseFloat(strings.TrimSpace(os.Getenv(k)), 64); err == nil {
+		return v
+	}
+	return def
+}
+
+// envList reads a comma separated list; an explicitly empty value ("-") disables it.
+func envList(k, def string) []string {
+	v := env(k, def)
+	if v == "-" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		if p = normKeyword(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// normKeyword lowercases and strips punctuation/emoji so "STOP!!" == "stop".
+func normKeyword(s string) string {
+	var b strings.Builder
+	space := false
+	for _, r := range strings.ToLower(strings.TrimSpace(s)) {
+		switch {
+		case unicode.IsLetter(r) || unicode.IsNumber(r) || unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Mc, r):
+			if space && b.Len() > 0 {
+				b.WriteByte(' ')
+			}
+			b.WriteRune(r)
+			space = false
+		default:
+			space = true
+		}
+	}
+	return b.String()
 }

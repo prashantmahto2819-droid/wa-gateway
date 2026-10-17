@@ -197,9 +197,7 @@ func fetchURL(ctx context.Context, raw string, maxBytes int64, allowPrivate bool
 		// Refuse to fetch from the server's own network (protects the VPS).
 		dialer.Control = func(_, address string, _ syscall.RawConn) error {
 			host, _, _ := net.SplitHostPort(address)
-			ip := net.ParseIP(host)
-			if ip == nil || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
-				ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
+			if !publicIP(net.ParseIP(host)) {
 				return fmt.Errorf("blocked address %s", host)
 			}
 			return nil
@@ -207,7 +205,7 @@ func fetchURL(ctx context.Context, raw string, maxBytes int64, allowPrivate bool
 	}
 	client := &http.Client{
 		Timeout:   90 * time.Second,
-		Transport: &http.Transport{DialContext: dialer.DialContext, Proxy: http.ProxyFromEnvironment, TLSHandshakeTimeout: 15 * time.Second},
+		Transport: &http.Transport{DialContext: dialer.DialContext, Proxy: nil, TLSHandshakeTimeout: 15 * time.Second},
 		CheckRedirect: func(_ *http.Request, via []*http.Request) error {
 			if len(via) >= 5 {
 				return errors.New("too many redirects")
@@ -354,4 +352,30 @@ func typingDelay(text string, rnd *rand.Rand) time.Duration {
 	d := time.Duration(len([]rune(text))) * 45 * time.Millisecond
 	d += time.Duration(rnd.IntN(1500)) * time.Millisecond
 	return min(max(d, 1500*time.Millisecond), 8*time.Second)
+}
+
+var blockedNets = func() []*net.IPNet {
+	var out []*net.IPNet
+	for _, c := range []string{"100.64.0.0/10", "198.18.0.0/15", "192.0.0.0/24", "64:ff9b::/96", "64:ff9b:1::/48", "2001:db8::/32", "240.0.0.0/4"} {
+		_, n, _ := net.ParseCIDR(c)
+		out = append(out, n)
+	}
+	return out
+}()
+
+// publicIP refuses loopback, private, link-local, CGNAT/metadata and similar ranges.
+func publicIP(ip net.IP) bool {
+	if ip == nil || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsUnspecified() || ip.IsMulticast() || ip.IsInterfaceLocalMulticast() {
+		return false
+	}
+	if v4 := ip.To4(); v4 != nil {
+		ip = v4
+	}
+	for _, n := range blockedNets {
+		if n.Contains(ip) {
+			return false
+		}
+	}
+	return true
 }

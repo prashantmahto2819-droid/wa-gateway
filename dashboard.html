@@ -89,7 +89,7 @@ async function api(method, path, body) {
 function show(on) { $('login').classList.toggle('hidden', on); $('app').classList.toggle('hidden', !on); }
 async function login() { KEY = $('key').value.trim(); const j = await api('GET', '/api/sessions'); if (j.ok) { sessionStorage.setItem('gwkey', KEY); show(true); render(j.sessions); } else alert(j.error || 'गलत key'); }
 
-const LABEL = { connected:['जुड़ा है','ok'], connecting:['जुड़ रहा है','warn'], disconnected:['फिर से जुड़ रहा है','warn'], qr:['QR scan बाकी','warn'], qr_expired:['QR expire, फिर से जोड़ें','bad'], logged_out:['लॉग-आउट, फिर से जोड़ें','bad'], replaced:['कहीं और खुला है','bad'], temp_banned:['अस्थायी बैन','bad'], new:['जोड़ा नहीं गया','warn'] };
+const LABEL = { outdated:['अपडेट ज़रूरी (update.sh --whatsmeow)','bad'], connected:['जुड़ा है','ok'], connecting:['जुड़ रहा है','warn'], disconnected:['फिर से जुड़ रहा है','warn'], qr:['QR scan बाकी','warn'], qr_expired:['QR expire, फिर से जोड़ें','bad'], logged_out:['लॉग-आउट, फिर से जोड़ें','bad'], replaced:['कहीं और खुला है','bad'], temp_banned:['अस्थायी बैन','bad'], new:['जोड़ा नहीं गया','warn'] };
 
 function render(list) {
   const opts = list.map(s => `<option>${esc(s.name)}</option>`).join('');
@@ -104,15 +104,36 @@ function render(list) {
         <div class="muted">${linked ? '+' + esc(s.phone) + (s.push_name ? ' · ' + esc(s.push_name) : '') : 'नंबर नहीं जुड़ा'}
         · आज भेजे: ${t.sent ?? 0}/${t.limit ?? 0} · नए लोग: ${t.new_contacts ?? 0}/${t.new_contact_limit ?? 0}
         ${s.timelock_until ? ' · <span class="bad">नए contacts पर रोक: ' + new Date(s.timelock_until*1000).toLocaleString() + ' तक</span>' : ''}
-        ${s.error ? '<br><span class="bad">' + esc(s.error) + '</span>' : ''}</div></div></div>
+        ${s.error ? '<br><span class="bad">' + esc(s.error) + '</span>' : ''}
+        ${s.pause_reason ? '<br><span class="warn">रुका क्यों: ' + esc(s.pause_reason) + '</span>' : ''}
+        ${healthLine(s.health)}
+        <br>Proxy: ${s.proxy ? esc(s.proxy) : 'नहीं (server का IP)'}</div></div></div>
       <div class="row" style="margin-top:8px">
         ${linked ? '' : `<button class="primary" onclick="openLink('${esc(s.name)}')">नंबर जोड़ें (QR)</button>`}
         ${linked ? `<button onclick="act('${esc(s.name)}','reconnect')">Reconnect</button>` : ''}
         <button onclick="togglePause('${esc(s.name)}', ${!s.paused})">${s.paused ? 'Queue चालू करें' : 'Queue रोकें'}</button>
         ${linked ? `<button class="danger" onclick="if(confirm('Logout करें?'))act('${esc(s.name)}','logout')">Logout</button>` : ''}
+        <button onclick="setProxy('${esc(s.name)}')">Proxy</button>
         <button class="danger" onclick="if(confirm('Session पूरी तरह हटाएँ?'))delSession('${esc(s.name)}')">हटाएँ</button>
       </div></div>`;
   }).join('');
+}
+function healthLine(h) {
+  if (!h) return '';
+  const cls = h.state === 'ok' ? 'ok' : (h.state === 'slow' ? 'warn' : 'bad');
+  const name = { ok:'ठीक', slow:'धीमा (कम जवाब)', paused:'रोका गया' }[h.state] || h.state;
+  return `<br>सेहत: <span class="${cls}">${name}</span> · fail ${(h.fail_rate*100).toFixed(0)}% · नए लोगों के जवाब ${(h.reply_rate*100).toFixed(1)}%${h.reason ? ' · ' + esc(h.reason) : ''}`;
+}
+async function setProxy(n) {
+  const p = prompt('Proxy (socks5://user:pass@host:port या http://host:port). हटाने के लिए खाली छोड़ें:');
+  if (p === null) return;
+  if (p.trim()) {
+    const t = await api('POST', `/api/sessions/${n}/proxy-test`, { proxy:p.trim() });
+    if (!t.ok) return alert('Proxy काम नहीं कर रहा: ' + t.error);
+    if (!confirm(`Proxy ठीक है: IP ${t.result.ip} ${t.result.country||''} ${t.result.city||''}${t.warning ? '\n⚠ ' + t.warning : ''}\nलगाएँ? (नंबर reconnect होगा)`)) return;
+  }
+  const j = await api('PATCH', `/api/sessions/${n}`, { proxy:p.trim() });
+  if (!j.ok) alert(j.error); refresh();
 }
 async function refresh() { const j = await api('GET', '/api/sessions'); if (j.ok) render(j.sessions); }
 async function createSession() { const n = $('newName').value.trim().toLowerCase(); if (!n) return; const j = await api('POST', '/api/sessions', { name:n }); if (!j.ok) return alert(j.error); $('newName').value=''; await refresh(); openLink(n); }

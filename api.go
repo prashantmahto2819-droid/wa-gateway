@@ -13,6 +13,7 @@ import (
 	"time"
 
 	qrcode "github.com/skip2/go-qrcode"
+	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/types"
 )
 
@@ -49,7 +50,12 @@ func (a *API) routes() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{name}/channels", auth(a.channels))
 	mux.HandleFunc("GET /api/sessions/{name}/channels/resolve", auth(a.resolveChannel))
 
+	mux.HandleFunc("POST /api/queue", auth(a.enqueuePool))
 	mux.HandleFunc("GET /api/queue/{id}", auth(a.queueItem))
+	mux.HandleFunc("POST /api/sessions/{name}/proxy-test", auth(a.proxyTest))
+	mux.HandleFunc("GET /api/optouts", auth(a.listOptouts))
+	mux.HandleFunc("POST /api/optouts", auth(a.addOptouts))
+	mux.HandleFunc("DELETE /api/optouts/{phone}", auth(a.removeOptout))
 	mux.HandleFunc("GET /api/campaigns/{campaign}", auth(a.campaignStats))
 	mux.HandleFunc("POST /api/campaigns/{campaign}/cancel", auth(a.cancelCampaign))
 	return securityHeaders(mux)
@@ -144,16 +150,17 @@ func (a *API) session(w http.ResponseWriter, r *http.Request) *Session {
 	return s
 }
 
-func (a *API) client(w http.ResponseWriter, r *http.Request) (*Session, bool) {
+func (a *API) client(w http.ResponseWriter, r *http.Request) (*Session, *whatsmeow.Client, bool) {
 	s := a.session(w, r)
 	if s == nil {
-		return nil, false
+		return nil, nil, false
 	}
-	if _, err := s.ready(); err != nil {
+	cli, err := s.ready()
+	if err != nil {
 		a.fail(w, err)
-		return nil, false
+		return nil, nil, false
 	}
-	return s, true
+	return s, cli, true
 }
 
 // ---------- sessions ----------
@@ -192,6 +199,13 @@ func (a *API) sessionInfo(ctx context.Context, s *Session) map[string]any {
 	if r.pairedAt > 0 {
 		info["linked_at"] = r.pairedAt
 	}
+	if r.proxy != "" {
+		info["proxy"] = maskProxy(r.proxy)
+	}
+	if r.pauseReason != "" && r.paused {
+		info["pause_reason"] = r.pauseReason
+	}
+	info["health"] = s.health(ctx, r)
 	return info
 }
 
@@ -234,17 +248,38 @@ func (a *API) updateSession(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		WebhookURL *string `json:"webhook_url"`
 		Paused     *bool   `json:"paused"`
+		Proxy      *string `json:"proxy"` // "" removes it
 	}
 	if err := decode(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "bad_request", err)
 		return
 	}
+	ctx := r.Context()
 	if body.WebhookURL != nil {
-		_, _ = a.m.db.ExecContext(r.Context(), `UPDATE gw_sessions SET webhook_url=? WHERE name=?`, strings.TrimSpace(*body.WebhookURL), s.name)
+		_, _ = a.m.db.ExecContext(ctx, `UPDATE gw_sessions SET webhook_url=? WHERE name=?`, strings.TrimSpace(*body.WebhookURL), s.name)
 	}
 	if body.Paused != nil {
-		_, _ = a.m.db.ExecContext(r.Context(), `UPDATE gw_sessions SET paused=? WHERE name=?`, b2i(*body.Paused), s.name)
+		if *body.Paused {
+			_, _ = a.m.db.ExecContext(ctx, `UPDATE gw_sessions SET paused=1, pause_reason='manual' WHERE name=?`, s.name)
+		} else {
+			// Resuming also restarts the health window so old failures don't pause it again.
+			_, _ = a.m.db.ExecContext(ctx, `UPDATE gw_sessions SET paused=0, pause_reason='', health_since=? WHERE name=?`, time.Now().Unix(), s.name)
+		}
 		s.poke()
+	}
+	if body.Proxy != nil {
+		p, err := validateProxy(*body.Proxy)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "bad_proxy", err)
+			return
+		}
+		_, _ = a.m.db.ExecContext(ctx, `UPDATE gw_sessions SET proxy=? WHERE name=?`, p, s.name)
+		// Reconnect a linked number so the new proxy takes effect now.
+		if row := s.row(ctx); row.jid != "" {
+			if jid, err := types.ParseJID(row.jid); err == nil {
+				go func() { _ = s.connectExisting(a.m.ctx, jid) }()
+			}
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "session": a.sessionInfo(r.Context(), s)})
 }
@@ -378,7 +413,8 @@ type queueBody struct {
 		To   string            `json:"to"`
 		Vars map[string]string `json:"vars"`
 	} `json:"recipients"`
-	SendAfter int64 `json:"send_after"` // optional unix time: don't start before this
+	SendAfter int64    `json:"send_after"` // optional unix time: don't start before this
+	Pool      []string `json:"pool"`       // optional: spread over these sessions
 }
 
 func (a *API) enqueue(w http.ResponseWriter, r *http.Request) {
@@ -391,6 +427,50 @@ func (a *API) enqueue(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", err)
 		return
 	}
+	pool := []string{s.name}
+	if len(body.Pool) > 0 {
+		pool = body.Pool
+	}
+	a.doEnqueue(w, r, pool, &body)
+}
+
+// enqueuePool: POST /api/queue with "pool": ["main","second",...] spreads a
+// campaign over several numbers.
+func (a *API) enqueuePool(w http.ResponseWriter, r *http.Request) {
+	var body queueBody
+	if err := decode(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", err)
+		return
+	}
+	if len(body.Pool) == 0 {
+		writeErr(w, http.StatusBadRequest, "bad_request", errors.New("pool (list of session names) is required"))
+		return
+	}
+	a.doEnqueue(w, r, body.Pool, &body)
+}
+
+func (a *API) doEnqueue(w http.ResponseWriter, r *http.Request, pool []string, body *queueBody) {
+	ctx := r.Context()
+	seen := map[string]bool{}
+	var clean []string
+	for _, n := range pool {
+		n = strings.TrimSpace(n)
+		if seen[n] {
+			continue
+		}
+		if _, err := a.m.get(n); err != nil {
+			writeErr(w, http.StatusNotFound, "session_not_found", errors.New("unknown session in pool: "+n))
+			return
+		}
+		seen[n] = true
+		clean = append(clean, n)
+	}
+	pool = clean
+	poolCol := ""
+	if len(pool) > 1 {
+		poolCol = strings.Join(pool, ",")
+	}
+
 	msgs := body.Messages
 	if body.Template != nil {
 		for _, rc := range body.Recipients {
@@ -407,46 +487,87 @@ func (a *API) enqueue(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", errors.New("at most 10000 messages per request"))
 		return
 	}
+	type row struct {
+		session, to, payload string
+		priority             int
+	}
+	rows := make([]row, 0, len(msgs))
+	cands := a.m.poolCandidates(ctx, pool)
+	skipped, dupes := 0, 0
+	inBatch := map[string]bool{}
 	for i := range msgs {
 		if err := msgs[i].validate(); err != nil {
 			writeErr(w, http.StatusBadRequest, "bad_request", errors.New("message "+itoa(i)+": "+err.Error()))
 			return
 		}
-		if _, err := parseTarget(msgs[i].To, a.cfg.DefaultCountryCode); err != nil {
+		to, err := parseTarget(msgs[i].To, a.cfg.DefaultCountryCode)
+		if err != nil {
 			writeErr(w, http.StatusBadRequest, "bad_request", errors.New("message "+itoa(i)+": "+err.Error()))
 			return
 		}
+		if msgs[i].Media != nil && msgs[i].Media.Base64 != "" {
+			writeErr(w, http.StatusBadRequest, "bad_request", errors.New("message "+itoa(i)+": queued messages must use media.url, not base64"))
+			return
+		}
+		key := to.String()
+		if isOptedOut(ctx, a.m.db, key) {
+			skipped++
+			continue
+		}
+		if inBatch[key] && to.Server != types.GroupServer && to.Server != types.NewsletterServer {
+			dupes++ // same person twice in one campaign
+			continue
+		}
+		inBatch[key] = true
+		session := pool[len(rows)%len(pool)] // nobody usable yet: spread evenly
+		if len(pool) > 1 {
+			if pick := a.m.pickSession(ctx, cands, key); pick != "" {
+				session = pick
+			}
+		}
+		p, _ := json.Marshal(msgs[i])
+		rows = append(rows, row{session: session, to: key, payload: string(p), priority: a.m.priorityFor(ctx, pool, key)})
 	}
-	tx, err := a.m.db.BeginTx(r.Context(), nil)
+
+	tx, err := a.m.db.BeginTx(ctx, nil)
 	if err != nil {
 		a.fail(w, err)
 		return
 	}
 	defer tx.Rollback()
-	stmt, err := tx.PrepareContext(r.Context(), `INSERT INTO gw_outbox(session,campaign,to_addr,payload,status,not_before,created_at) VALUES(?,?,?,?,'queued',?,?)`)
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO gw_outbox(session,campaign,to_addr,payload,status,not_before,priority,pool,created_at) VALUES(?,?,?,?,'queued',?,?,?,?)`)
 	if err != nil {
 		a.fail(w, err)
 		return
 	}
+	defer stmt.Close()
 	now := time.Now().Unix()
-	ids := make([]int64, 0, len(msgs))
-	for i := range msgs {
-		p, _ := json.Marshal(msgs[i])
-		res, err := stmt.ExecContext(r.Context(), s.name, body.Campaign, msgs[i].To, string(p), body.SendAfter, now)
+	ids := make([]int64, 0, len(rows))
+	perSession := map[string]int{}
+	for _, rw := range rows {
+		res, err := stmt.ExecContext(ctx, rw.session, body.Campaign, rw.to, rw.payload, body.SendAfter, rw.priority, poolCol, now)
 		if err != nil {
 			a.fail(w, err)
 			return
 		}
 		id, _ := res.LastInsertId()
 		ids = append(ids, id)
+		perSession[rw.session]++
 	}
-	stmt.Close()
 	if err := tx.Commit(); err != nil {
 		a.fail(w, err)
 		return
 	}
-	s.poke()
-	out := map[string]any{"ok": true, "queued": len(ids), "first_id": ids[0], "last_id": ids[len(ids)-1], "campaign": body.Campaign}
+	for name := range perSession {
+		if s, err := a.m.get(name); err == nil {
+			s.poke()
+		}
+	}
+	out := map[string]any{"ok": true, "queued": len(ids), "skipped_opted_out": skipped, "skipped_duplicates": dupes,
+		"per_session": perSession, "campaign": body.Campaign}
+	if len(ids) > 0 {
+		out["first_id"], out["last_id"] = ids[0], ids[len(ids)-1]
+	}
 	if len(ids) <= 100 {
 		out["ids"] = ids
 	}
@@ -456,7 +577,7 @@ func (a *API) enqueue(w http.ResponseWriter, r *http.Request) {
 func itoa(i int) string { return strconv.Itoa(i) }
 
 func statusCounts(ctx context.Context, db *sql.DB, where string, arg any) map[string]int {
-	out := map[string]int{"queued": 0, "sending": 0, "sent": 0, "failed": 0, "cancelled": 0}
+	out := map[string]int{"queued": 0, "sending": 0, "sent": 0, "failed": 0, "skipped": 0, "cancelled": 0}
 	rows, err := db.QueryContext(ctx, `SELECT status, COUNT(*) FROM gw_outbox WHERE `+where+` AND direct=0 GROUP BY status`, arg)
 	if err != nil {
 		return out
@@ -516,7 +637,7 @@ func (a *API) cancelCampaign(w http.ResponseWriter, r *http.Request) {
 // ---------- chat helpers ----------
 
 func (a *API) markRead(w http.ResponseWriter, r *http.Request) {
-	s, ok := a.client(w, r)
+	_, cli, ok := a.client(w, r)
 	if !ok {
 		return
 	}
@@ -541,7 +662,6 @@ func (a *API) markRead(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	cli, _ := s.ready()
 	if err := cli.MarkRead(r.Context(), body.IDs, time.Now(), chat, sender); err != nil {
 		a.fail(w, err)
 		return
@@ -550,7 +670,7 @@ func (a *API) markRead(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) typing(w http.ResponseWriter, r *http.Request) {
-	s, ok := a.client(w, r)
+	s, cli, ok := a.client(w, r)
 	if !ok {
 		return
 	}
@@ -571,7 +691,6 @@ func (a *API) typing(w http.ResponseWriter, r *http.Request) {
 	if body.State == "paused" {
 		state = types.ChatPresencePaused
 	}
-	cli, _ := s.ready()
 	s.goOnline(r.Context(), cli)
 	if err := cli.SendChatPresence(r.Context(), to, state, types.ChatPresenceMediaText); err != nil {
 		a.fail(w, err)
@@ -581,7 +700,7 @@ func (a *API) typing(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) check(w http.ResponseWriter, r *http.Request) {
-	s, ok := a.client(w, r)
+	s, cli, ok := a.client(w, r)
 	if !ok {
 		return
 	}
@@ -614,7 +733,6 @@ func (a *API) check(w http.ResponseWriter, r *http.Request) {
 		}
 		phones = append(phones, "+"+j.User)
 	}
-	cli, _ := s.ready()
 	res, err := cli.IsOnWhatsApp(r.Context(), phones)
 	if err != nil {
 		a.fail(w, err)
@@ -634,11 +752,10 @@ func (a *API) check(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) groups(w http.ResponseWriter, r *http.Request) {
-	s, ok := a.client(w, r)
+	_, cli, ok := a.client(w, r)
 	if !ok {
 		return
 	}
-	cli, _ := s.ready()
 	gs, err := cli.GetJoinedGroups(r.Context())
 	if err != nil {
 		a.fail(w, err)
@@ -673,11 +790,10 @@ func (a *API) groups(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) channels(w http.ResponseWriter, r *http.Request) {
-	s, ok := a.client(w, r)
+	_, cli, ok := a.client(w, r)
 	if !ok {
 		return
 	}
-	cli, _ := s.ready()
 	ns, err := cli.GetSubscribedNewsletters(r.Context())
 	if err != nil {
 		a.fail(w, err)
@@ -696,7 +812,7 @@ func (a *API) channels(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) resolveChannel(w http.ResponseWriter, r *http.Request) {
-	s, ok := a.client(w, r)
+	_, cli, ok := a.client(w, r)
 	if !ok {
 		return
 	}
@@ -708,11 +824,94 @@ func (a *API) resolveChannel(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", errors.New("invite (channel link) is required"))
 		return
 	}
-	cli, _ := s.ready()
 	n, err := cli.GetNewsletterInfoWithInvite(r.Context(), invite)
 	if err != nil {
 		a.fail(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "jid": n.ID.String(), "name": n.ThreadMeta.Name.Text})
+}
+
+// ---------- proxy and opt-outs ----------
+
+func (a *API) proxyTest(w http.ResponseWriter, r *http.Request) {
+	s := a.session(w, r)
+	if s == nil {
+		return
+	}
+	var body struct {
+		Proxy string `json:"proxy"` // empty = test the saved one
+	}
+	_ = decode(r, &body)
+	raw := body.Proxy
+	if raw == "" {
+		raw = s.row(r.Context()).proxy
+	}
+	p, err := validateProxy(raw)
+	if err != nil || p == "" {
+		writeErr(w, http.StatusBadRequest, "bad_proxy", errors.New("no valid proxy to test"))
+		return
+	}
+	info, err := testProxy(r.Context(), p)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "proxy_failed", err)
+		return
+	}
+	out := map[string]any{"ok": true, "proxy": maskProxy(p), "result": info}
+	if info.Country != "" && !strings.EqualFold(info.Country, "IN") && a.cfg.DefaultCountryCode == "91" {
+		out["warning"] = "proxy IP is not in India; for Indian numbers an Indian IP looks more natural"
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (a *API) listOptouts(w http.ResponseWriter, r *http.Request) {
+	rows, err := a.m.db.QueryContext(r.Context(), `SELECT phone, keyword, session, at FROM gw_optouts ORDER BY at DESC LIMIT 5000`)
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var phone, kw, sess string
+		var at int64
+		if rows.Scan(&phone, &kw, &sess, &at) == nil {
+			out = append(out, map[string]any{"phone": phone, "keyword": kw, "session": sess, "at": at})
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "optouts": out})
+}
+
+func (a *API) addOptouts(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Numbers []string `json:"numbers"`
+	}
+	if err := decode(r, &body); err != nil || len(body.Numbers) == 0 {
+		writeErr(w, http.StatusBadRequest, "bad_request", errors.New("numbers is required"))
+		return
+	}
+	added := 0
+	for _, n := range body.Numbers {
+		j, err := parseTarget(n, a.cfg.DefaultCountryCode)
+		if err != nil {
+			continue
+		}
+		if _, err := a.m.db.ExecContext(r.Context(), `INSERT OR REPLACE INTO gw_optouts(phone, keyword, session, at) VALUES(?, 'manual', '', ?)`,
+			digitsOf(j.String()), time.Now().Unix()); err == nil {
+			added++
+			_, _ = a.m.db.ExecContext(r.Context(), `UPDATE gw_outbox SET status='skipped', error='opted_out' WHERE status='queued' AND to_addr=?`, j.String())
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "added": added})
+}
+
+func (a *API) removeOptout(w http.ResponseWriter, r *http.Request) {
+	j, err := parseTarget(r.PathValue("phone"), a.cfg.DefaultCountryCode)
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	res, _ := a.m.db.ExecContext(r.Context(), `DELETE FROM gw_optouts WHERE phone=?`, digitsOf(j.String()))
+	n, _ := res.RowsAffected()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "removed": n})
 }

@@ -95,10 +95,12 @@ func (m *Manager) loadAll() error {
 
 func (m *Manager) add(name string) *Session {
 	s := newSession(m, name)
+	qctx, cancel := context.WithCancel(m.ctx)
+	s.stopQueue = cancel
 	m.mu.Lock()
 	m.sessions[name] = s
 	m.mu.Unlock()
-	go s.runQueue(m.ctx)
+	go s.runQueue(qctx)
 	return s
 }
 
@@ -146,6 +148,9 @@ func (m *Manager) remove(ctx context.Context, name string) error {
 		return err
 	}
 	s.logout(ctx)
+	if s.stopQueue != nil {
+		s.stopQueue()
+	}
 	m.mu.Lock()
 	delete(m.sessions, name)
 	m.mu.Unlock()
@@ -176,7 +181,10 @@ func (m *Manager) watchdog() {
 			cli, st := s.client, s.status
 			s.mu.Unlock()
 			linked := cli != nil && cli.Store.ID != nil
-			if !linked || st == StReplaced || st == StLoggedOut || cli.IsConnected() {
+			s.mu.Lock()
+			banned := s.banUntil.After(time.Now())
+			s.mu.Unlock()
+			if !linked || st == StReplaced || st == StLoggedOut || st == StOutdated || banned || cli.IsConnected() {
 				delete(offlineSince, s.name)
 				continue
 			}
