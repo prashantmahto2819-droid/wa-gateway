@@ -119,12 +119,12 @@ export async function render(ctx) {
   async function drawStatusAudience(w) {
     const a = st.aud;
     w.innerHTML = html`<div class="aud-modes" role="radiogroup" aria-label="${t('Who sees this status')}">
-        ${[['auto', 'sparkle', 'Automatic', 'People who chat with you first, then saved contacts, then your phone’s address book.'], ['tags', 'users', 'Contacts with tags', 'Only contacts that have the tags you pick.'], ['phones', 'contact', 'Choose people', 'Pick exactly who sees it from your WhatsApp contacts.']]
+        ${[['auto', 'sparkle', 'Everyone (like your phone)', 'All your WhatsApp contacts — people who chat with you first, then saved contacts, then the phone’s address book.'], ['tags', 'users', 'Contacts with tags', 'Only contacts that have the tags you pick.'], ['phones', 'contact', 'Choose people', 'Pick exactly who sees it from your WhatsApp contacts.']]
           .map(([k, i, l, d]) => html`<label class="choice"><input type="radio" name="audmode" value="${k}" ${a.mode === k ? 'checked' : ''}><b>${ic(i, 16)}${t(l)}</b><small>${t(d)}</small></label>`)}</div>
       <div data-aud-body class="mt-s"></div>
       <div class="row mt-s" style="align-items:flex-end;gap:14px">
-        <label class="field" style="max-width:200px"><span>${t('At most')}</span><input type="number" min="10" max="5000" step="10" data-aud-limit value="${a.limit}" placeholder="1000"></label>
-        <p class="hint grow">${t('WhatsApp refuses a Status sent to thousands of people at once from a linked device, so each post goes to at most this many (server limit: STATUS_MAX_RECIPIENTS, default 1000). People only see it if they also saved your number.')}</p></div>`.s;
+        <label class="field" style="max-width:200px"><span>${t('At most')}</span><input type="number" min="10" max="5000" step="10" data-aud-limit value="${a.limit}" placeholder="5000"></label>
+        <p class="hint grow">${t('Leave empty to reach everyone up to the server limit (STATUS_MAX_RECIPIENTS, default 5000). Each contact is looked up the way WhatsApp Web does, so people on WhatsApp’s newer LID system are reached too. People only see a Status if they also saved your number.')}</p></div>`.s;
     const body = w.querySelector('[data-aud-body]');
     if (a.mode === 'tags') {
       if (!st.tags) { body.innerHTML = skel(1).s; const j = await api('GET', '/api/contacts/tags', undefined, { silent: true }); st.tags = j.ok ? j.tags || [] : []; }

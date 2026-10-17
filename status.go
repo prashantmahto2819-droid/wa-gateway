@@ -134,10 +134,12 @@ func (s *Session) statusRecipients(ctx context.Context, cli *whatsmeow.Client, o
 	if aud == nil {
 		aud = &StatusAudience{}
 	}
-	limit := s.m.cfg.StatusMax
-	if aud.Limit > 0 && aud.Limit < limit {
-		limit = aud.Limit
+	want := s.m.cfg.StatusMax
+	if aud.Limit > 0 && aud.Limit < want {
+		want = aud.Limit
 	}
+	// Collect some extra candidates: people no longer on WhatsApp drop out below.
+	limit := want + want/4 + 20
 	me := cli.Store.GetJID().User
 	seen := map[string]bool{me: true}
 	var out []types.JID
@@ -219,7 +221,74 @@ func (s *Session) statusRecipients(ctx context.Context, cli *whatsmeow.Client, o
 	if len(out) == 0 {
 		return nil, errors.New("no one to show this Status to: save some contacts first, or choose numbers")
 	}
-	return out, nil
+	reach, missing := s.reachable(ctx, cli, out)
+	if len(reach) > want {
+		reach = reach[:want]
+	}
+	s.m.log.Info("status audience", "session", s.name, "mode", firstNonEmpty(aud.Mode, "auto"), "candidates", len(out),
+		"reachable", len(reach), "no_devices", missing)
+	if len(reach) == 0 {
+		return nil, errors.New("none of these contacts could be found on WhatsApp right now; try again in a few minutes")
+	}
+	return reach, nil
+}
+
+// reachable looks up each person's phones (devices) the way WhatsApp Web
+// does, in small batches. Contacts moved to WhatsApp's newer "LID" identity
+// often return no devices when asked by phone number, which is why a Status
+// silently skipped them; for those we ask by LID instead. People with no
+// devices either way are left out (not on WhatsApp any more).
+func (s *Session) reachable(ctx context.Context, cli *whatsmeow.Client, list []types.JID) ([]types.JID, int) {
+	const batch = 300
+	hasDevices := func(jids []types.JID) map[string]bool {
+		found := map[string]bool{}
+		for i := 0; i < len(jids); i += batch {
+			chunk := jids[i:min(i+batch, len(jids))]
+			devs, err := cli.GetUserDevices(ctx, chunk)
+			if err != nil {
+				s.m.log.Warn("status device lookup", "session", s.name, "err", err)
+				for _, j := range chunk { // unknown: keep them, WhatsApp may still deliver
+					found[j.User] = true
+				}
+			}
+			for _, d := range devs {
+				found[d.User] = true
+			}
+			if i+batch < len(jids) {
+				_ = sleepCtx(ctx, 400*time.Millisecond) // gentle on WhatsApp's lookup limits
+			}
+		}
+		return found
+	}
+	byPN := hasDevices(list)
+	var out, viaLID []types.JID
+	lidOf := map[string]types.JID{}
+	for _, j := range list {
+		if byPN[j.User] {
+			continue
+		}
+		if lid, err := cli.Store.LIDs.GetLIDForPN(ctx, j); err == nil && !lid.IsEmpty() {
+			lid = lid.ToNonAD()
+			lidOf[j.User] = lid
+			viaLID = append(viaLID, lid)
+		}
+	}
+	byLID := map[string]bool{}
+	if len(viaLID) > 0 {
+		byLID = hasDevices(viaLID)
+	}
+	missing := 0
+	for _, j := range list { // keep the original priority order
+		switch {
+		case byPN[j.User]:
+			out = append(out, j)
+		case lidOf[j.User].User != "" && byLID[lidOf[j.User].User]:
+			out = append(out, lidOf[j.User])
+		default:
+			missing++
+		}
+	}
+	return out, missing
 }
 
 func underlyingContacts(cli *whatsmeow.Client) store.ContactStore {

@@ -94,7 +94,7 @@ func loadConfig() (*Config, error) {
 		TimelockPause:      envDur("TIMELOCK_PAUSE", 6*time.Hour),
 		RetentionDays:      envInt("RETENTION_DAYS", 30),
 		WebhookIncludeSelf: envBool("WEBHOOK_INCLUDE_SELF", true),
-		StatusMax:          min(max(envInt("STATUS_MAX_RECIPIENTS", 1000), 10), 5000),
+		StatusMax:          min(max(envInt("STATUS_MAX_RECIPIENTS", 5000), 10), 15000),
 	}
 	c.OptoutKeywords = envList("OPTOUT_KEYWORDS", "stop,unsubscribe,stop karo,band karo,बंद,बंद करो,रोकें,मत भेजो")
 	c.OptinKeywords = envList("OPTIN_KEYWORDS", "start,subscribe,शुरू")

@@ -250,3 +250,14 @@ func TestLinkPreviewBlockedBotAndEndpoint(t *testing.T) {
 		t.Fatalf("no-image advice: %v", out)
 	}
 }
+
+func TestRefusedForSize(t *testing.T) {
+	for _, e := range []error{fmt.Errorf("%w 479", whatsmeow.ErrServerReturnedError), errors.New("content limit exceeded"), errors.New("rate-overlimit")} {
+		if !refusedForSize(e) {
+			t.Errorf("%v should shrink and retry", e)
+		}
+	}
+	if refusedForSize(errors.New("websocket not connected")) {
+		t.Error("connection error treated as size refusal")
+	}
+}

@@ -1073,5 +1073,8 @@ const HI = {
   "(The big picture could not be uploaded right now; a small one will be used.)": "(बड़ी फ़ोटो अभी upload नहीं हो पाई; छोटी फ़ोटो जाएगी।)",
   "The server could not open this page:": "Server यह page नहीं खोल पाया:",
   "No picture found on this page.": "इस page पर कोई फ़ोटो नहीं मिली।",
+  "Everyone (like your phone)": "सभी (जैसे फ़ोन से)",
+  "All your WhatsApp contacts — people who chat with you first, then saved contacts, then the phone’s address book.": "आपके सारे WhatsApp contacts — पहले जो आपसे chat करते हैं, फिर saved contacts, फिर फ़ोन की list।",
+  "Leave empty to reach everyone up to the server limit (STATUS_MAX_RECIPIENTS, default 5000). Each contact is looked up the way WhatsApp Web does, so people on WhatsApp’s newer LID system are reached too. People only see a Status if they also saved your number.": "खाली छोड़ें तो server की सीमा (STATUS_MAX_RECIPIENTS, default 5000) तक सबको जाएगा। हर contact को WhatsApp Web की तरह ढूँढा जाता है, इसलिए नए LID वाले लोग भी छूटते नहीं। Status उन्हीं को दिखता है जिन्होंने आपका नंबर save किया है।",
 };
 /* HINDI_END */

@@ -29,6 +29,15 @@ type SendResult struct {
 	Recipients  int  `json:"recipients,omitempty"` // Status: how many people it was shared with
 }
 
+// refusedForSize reports a server refusal that a smaller Status audience may fix.
+func refusedForSize(err error) bool {
+	if errors.Is(err, whatsmeow.ErrServerReturnedError) {
+		return true
+	}
+	m := strings.ToLower(err.Error())
+	return strings.Contains(m, "limit") || strings.Contains(m, "too large") || strings.Contains(m, "too many") || strings.Contains(m, "overlimit")
+}
+
 // leftGateway reports whether a failed SendMessage had already written the
 // message to WhatsApp (only the server's acknowledgement was missing).
 func leftGateway(err error, resp whatsmeow.SendResponse) bool {
@@ -332,9 +341,23 @@ func (s *Session) send(ctx context.Context, req *SendRequest, opts sendOpts) (*S
 		}
 	}
 
-	msgID := cli.GenerateMessageID()
-	resp, err := cli.SendMessage(ctx, to, msg, whatsmeow.SendRequestExtra{ID: msgID, MediaHandle: handle, AdditionalNodes: extraNodes,
-		Timeout: 2 * time.Minute})
+	var msgID string
+	var resp whatsmeow.SendResponse
+	for attempt := 0; ; attempt++ {
+		msgID = cli.GenerateMessageID()
+		resp, err = cli.SendMessage(ctx, to, msg, whatsmeow.SendRequestExtra{ID: msgID, MediaHandle: handle, AdditionalNodes: extraNodes,
+			Timeout: 2 * time.Minute})
+		// A Status too big for WhatsApp is refused outright (nothing delivered),
+		// so it is safe to try again with the first half of the audience.
+		list, _ := ctx.Value(statusAudKey{}).([]types.JID)
+		if err == nil || !isStatus || leftGateway(err, resp) || attempt >= 3 || len(list) <= 500 || !refusedForSize(err) {
+			break
+		}
+		s.m.log.Warn("status refused, retrying with a smaller audience", "session", s.name, "audience", len(list), "err", err)
+		list = list[:len(list)/2]
+		statusCount = len(list)
+		ctx = context.WithValue(ctx, statusAudKey{}, list)
+	}
 	res := &SendResult{To: to.String(), NewContact: newContact, Recipients: statusCount}
 	if err != nil && leftGateway(err, resp) {
 		// Big Status audiences and slow links can outlast the acknowledgement;
