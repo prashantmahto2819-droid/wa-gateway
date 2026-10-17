@@ -1,0 +1,5 @@
+.env
+data/
+/wa-gateway
+*.db
+*.db-*

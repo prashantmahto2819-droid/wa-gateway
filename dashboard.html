@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="hi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WA Gateway</title>
+<style>
+  :root { --bg:#f4f6f5; --card:#fff; --ink:#1c2321; --muted:#66706c; --line:#e1e6e3; --brand:#128c5e; --warn:#b45309; --bad:#b42318; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#111614; --card:#1a201e; --ink:#e7ecea; --muted:#9aa5a0; --line:#2b3330; --brand:#2fbf86; --warn:#f2a54a; --bad:#f2735f; } }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.5 system-ui, -apple-system, "Segoe UI", "Noto Sans Devanagari", sans-serif; background:var(--bg); color:var(--ink); }
+  header { padding:14px 16px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; background:var(--card); }
+  header b { font-size:17px; }
+  main { max-width:880px; margin:0 auto; padding:16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:14px; }
+  h2 { font-size:15px; margin:0 0 10px; }
+  input, select, textarea { font:inherit; color:inherit; background:var(--bg); border:1px solid var(--line); border-radius:7px; padding:8px 10px; width:100%; }
+  textarea { min-height:70px; }
+  button { font:inherit; border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:7px; padding:7px 12px; cursor:pointer; }
+  button.primary { background:var(--brand); border-color:var(--brand); color:#fff; }
+  button.danger { color:var(--bad); }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .row > * { flex:1 1 160px; }
+  .row > button { flex:0 0 auto; }
+  .muted { color:var(--muted); font-size:13px; }
+  .pill { display:inline-block; padding:2px 9px; border-radius:99px; font-size:12px; border:1px solid var(--line); }
+  .ok { color:var(--brand); border-color:var(--brand); } .warn { color:var(--warn); border-color:var(--warn); } .bad { color:var(--bad); border-color:var(--bad); }
+  .sess { border-top:1px solid var(--line); padding:12px 0; }
+  .sess:first-of-type { border-top:0; }
+  .qr { text-align:center; padding:10px; }
+  .qr img { width:260px; max-width:100%; background:#fff; padding:8px; border-radius:8px; }
+  pre { white-space:pre-wrap; word-break:break-all; font-size:12px; background:var(--bg); padding:10px; border-radius:7px; max-height:280px; overflow:auto; }
+  .hidden { display:none; }
+  table { width:100%; border-collapse:collapse; font-size:13px; } td { padding:5px 4px; border-top:1px solid var(--line); vertical-align:top; word-break:break-all; }
+</style>
+</head>
+<body>
+<header><b>WA Gateway</b><span class="muted" id="who"></span></header>
+<main>
+  <section class="card" id="login">
+    <h2>लॉगिन / Login</h2>
+    <div class="row"><input id="key" type="password" placeholder="API key (.env में API_KEY)"><button class="primary" onclick="login()">खोलें</button></div>
+    <p class="muted">Key सिर्फ़ इस tab में रहती है; tab बंद करते ही हट जाती है।</p>
+  </section>
+
+  <div id="app" class="hidden">
+    <section class="card">
+      <h2>WhatsApp नंबर / Sessions</h2>
+      <div id="sessions"></div>
+      <div class="row" style="margin-top:10px"><input id="newName" placeholder="नया session नाम, जैसे main"><button onclick="createSession()">+ जोड़ें</button></div>
+    </section>
+
+    <section class="card hidden" id="linkBox">
+      <h2>नंबर जोड़ें: <span id="linkName"></span></h2>
+      <p class="muted">फ़ोन में WhatsApp → Linked devices → Link a device → यह QR scan करें।</p>
+      <div class="qr" id="qrArea">QR आ रहा है…</div>
+      <div class="row"><input id="pairPhone" placeholder="या फ़ोन नंबर डालकर code पाएँ"><button onclick="pairCode()">Code लें</button></div>
+      <p id="pairOut"></p>
+      <button onclick="closeLink()">बंद करें</button>
+    </section>
+
+    <section class="card">
+      <h2>टेस्ट मैसेज / Test send</h2>
+      <div class="row"><select id="sendSess"></select><input id="sendTo" placeholder="नंबर या JID (group/channel)"></div>
+      <p></p><textarea id="sendText" placeholder="मैसेज"></textarea>
+      <p></p><div class="row"><input id="sendImg" placeholder="फ़ोटो का link (optional)"><button class="primary" onclick="sendTest()">भेजें</button></div>
+      <pre id="sendOut" class="hidden"></pre>
+    </section>
+
+    <section class="card">
+      <h2>Groups और Channels</h2>
+      <div class="row"><select id="listSess"></select><button onclick="loadGroups()">Groups</button><button onclick="loadChannels()">Channels</button></div>
+      <div id="listOut" class="muted" style="margin-top:8px">JID copy करके website में इस्तेमाल करें।</div>
+    </section>
+  </div>
+</main>
+<script>
+let KEY = sessionStorage.getItem('gwkey') || '';
+let linkTimer = null, linkName = '';
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+async function api(method, path, body) {
+  const r = await fetch(path, { method, headers: { 'Authorization': 'Bearer ' + KEY, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json().catch(() => ({ ok:false, error:'bad response' }));
+  if (r.status === 401) { sessionStorage.removeItem('gwkey'); KEY=''; show(false); }
+  return j;
+}
+function show(on) { $('login').classList.toggle('hidden', on); $('app').classList.toggle('hidden', !on); }
+async function login() { KEY = $('key').value.trim(); const j = await api('GET', '/api/sessions'); if (j.ok) { sessionStorage.setItem('gwkey', KEY); show(true); render(j.sessions); } else alert(j.error || 'गलत key'); }
+
+const LABEL = { connected:['जुड़ा है','ok'], connecting:['जुड़ रहा है','warn'], disconnected:['फिर से जुड़ रहा है','warn'], qr:['QR scan बाकी','warn'], qr_expired:['QR expire, फिर से जोड़ें','bad'], logged_out:['लॉग-आउट, फिर से जोड़ें','bad'], replaced:['कहीं और खुला है','bad'], temp_banned:['अस्थायी बैन','bad'], new:['जोड़ा नहीं गया','warn'] };
+
+function render(list) {
+  const opts = list.map(s => `<option>${esc(s.name)}</option>`).join('');
+  $('sendSess').innerHTML = opts; $('listSess').innerHTML = opts;
+  if (!list.length) { $('sessions').innerHTML = '<p class="muted">अभी कोई नंबर नहीं। नीचे नाम लिखकर जोड़ें (जैसे main)।</p>'; return; }
+  $('sessions').innerHTML = list.map(s => {
+    const [lab, cls] = LABEL[s.status] || [s.status, 'warn'];
+    const linked = !!s.jid;
+    const t = s.today || {};
+    return `<div class="sess">
+      <div class="row"><div><b>${esc(s.name)}</b> <span class="pill ${cls}">${esc(lab)}</span> ${s.paused ? '<span class="pill warn">queue रुकी</span>' : ''}
+        <div class="muted">${linked ? '+' + esc(s.phone) + (s.push_name ? ' · ' + esc(s.push_name) : '') : 'नंबर नहीं जुड़ा'}
+        · आज भेजे: ${t.sent ?? 0}/${t.limit ?? 0} · नए लोग: ${t.new_contacts ?? 0}/${t.new_contact_limit ?? 0}
+        ${s.timelock_until ? ' · <span class="bad">नए contacts पर रोक: ' + new Date(s.timelock_until*1000).toLocaleString() + ' तक</span>' : ''}
+        ${s.error ? '<br><span class="bad">' + esc(s.error) + '</span>' : ''}</div></div></div>
+      <div class="row" style="margin-top:8px">
+        ${linked ? '' : `<button class="primary" onclick="openLink('${esc(s.name)}')">नंबर जोड़ें (QR)</button>`}
+        ${linked ? `<button onclick="act('${esc(s.name)}','reconnect')">Reconnect</button>` : ''}
+        <button onclick="togglePause('${esc(s.name)}', ${!s.paused})">${s.paused ? 'Queue चालू करें' : 'Queue रोकें'}</button>
+        ${linked ? `<button class="danger" onclick="if(confirm('Logout करें?'))act('${esc(s.name)}','logout')">Logout</button>` : ''}
+        <button class="danger" onclick="if(confirm('Session पूरी तरह हटाएँ?'))delSession('${esc(s.name)}')">हटाएँ</button>
+      </div></div>`;
+  }).join('');
+}
+async function refresh() { const j = await api('GET', '/api/sessions'); if (j.ok) render(j.sessions); }
+async function createSession() { const n = $('newName').value.trim().toLowerCase(); if (!n) return; const j = await api('POST', '/api/sessions', { name:n }); if (!j.ok) return alert(j.error); $('newName').value=''; await refresh(); openLink(n); }
+async function act(n, a) { const j = await api('POST', `/api/sessions/${n}/${a}`); if (!j.ok) alert(j.error); setTimeout(refresh, 800); }
+async function togglePause(n, p) { await api('PATCH', `/api/sessions/${n}`, { paused:p }); refresh(); }
+async function delSession(n) { const r = await fetch(`/api/sessions/${n}`, { method:'DELETE', headers:{ Authorization:'Bearer '+KEY } }); refresh(); }
+
+async function openLink(n) {
+  linkName = n; $('linkName').textContent = n; $('linkBox').classList.remove('hidden'); $('pairOut').textContent=''; $('qrArea').textContent = 'QR आ रहा है…';
+  const j = await api('POST', `/api/sessions/${n}/qr`); showQR(j);
+  clearInterval(linkTimer); linkTimer = setInterval(async () => showQR(await api('GET', `/api/sessions/${n}/qr`)), 3000);
+}
+function showQR(j) {
+  if (!j.ok) { $('qrArea').textContent = j.error; return; }
+  if (j.qr_image) $('qrArea').innerHTML = `<img alt="QR" src="${j.qr_image}">`;
+  else if (j.status === 'connected' || j.status === 'connecting') { $('qrArea').innerHTML = '<b class="ok">जुड़ गया ✓</b>'; clearInterval(linkTimer); refresh(); }
+  else if (j.status === 'qr_expired') { $('qrArea').innerHTML = `QR का समय ख़त्म। <button onclick="openLink('${esc(linkName)}')">नया QR</button>`; clearInterval(linkTimer); }
+}
+function closeLink() { clearInterval(linkTimer); $('linkBox').classList.add('hidden'); refresh(); }
+async function pairCode() { $('pairOut').textContent = 'Code माँग रहे हैं…'; const j = await api('POST', `/api/sessions/${linkName}/pair-code`, { phone:$('pairPhone').value }); $('pairOut').innerHTML = j.ok ? `Code: <b style="font-size:20px;letter-spacing:2px">${esc(j.code)}</b><br><span class="muted">फ़ोन: Linked devices → Link a device → Link with phone number instead</span>` : esc(j.error); }
+
+async function sendTest() {
+  const body = { to:$('sendTo').value, text:$('sendText').value };
+  if ($('sendImg').value.trim()) body.media = { type:'image', url:$('sendImg').value.trim() };
+  $('sendOut').classList.remove('hidden'); $('sendOut').textContent = 'भेज रहे हैं…';
+  const j = await api('POST', `/api/sessions/${$('sendSess').value}/send`, body);
+  $('sendOut').textContent = JSON.stringify(j, null, 2); refresh();
+}
+async function loadGroups() {
+  const j = await api('GET', `/api/sessions/${$('listSess').value}/groups`);
+  $('listOut').innerHTML = j.ok ? '<table>' + j.groups.map(g => `<tr><td>${esc(g.name)}<br><span class="muted">${esc(g.type)}${g.i_am_admin?' · admin':''}</span></td><td>${esc(g.jid)}</td></tr>`).join('') + '</table>' : esc(j.error);
+}
+async function loadChannels() {
+  const j = await api('GET', `/api/sessions/${$('listSess').value}/channels`);
+  $('listOut').innerHTML = j.ok ? '<table>' + j.channels.map(c => `<tr><td>${esc(c.name)}<br><span class="muted">${esc(c.role)}${c.can_post?' · post कर सकते हैं':''}</span></td><td>${esc(c.jid)}</td></tr>`).join('') + '</table>' : esc(j.error);
+}
+if (KEY) { api('GET','/api/sessions').then(j => { if (j.ok) { show(true); render(j.sessions); } }); }
+setInterval(() => { if (KEY && !$('app').classList.contains('hidden')) refresh(); }, 15000);
+</script>
+</body>
+</html>
