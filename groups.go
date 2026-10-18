@@ -416,15 +416,33 @@ func (a *API) postStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	req.To = "status"
 	req.Poll, req.Menu, req.Location, req.Contact = nil, nil, nil, nil
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
-	defer cancel()
-	res, err := s.send(ctx, &req, sendOpts{direct: true, force: r.URL.Query().Get("force") == "1"})
-	if !errors.Is(err, errDupStatus) {
-		s.recordDirect(context.Background(), &req, res, err)
+	// A Status to tens of thousands of people (maybe in parts) can take
+	// several minutes; it keeps going in the background if the answer
+	// can't wait that long.
+	type result struct {
+		res *SendResult
+		err error
 	}
-	if err != nil {
-		a.fail(w, err)
-		return
+	done := make(chan result, 1)
+	force := r.URL.Query().Get("force") == "1"
+	go func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 15*time.Minute)
+		defer cancel()
+		res, err := s.send(ctx, &req, sendOpts{direct: true, force: force})
+		if !errors.Is(err, errDupStatus) {
+			s.recordDirect(context.Background(), &req, res, err)
+		}
+		done <- result{res, err}
+	}()
+	select {
+	case out := <-done:
+		if out.err != nil {
+			a.fail(w, out.err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": out.res})
+	case <-time.After(150 * time.Second):
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "pending": true,
+			"note": "Still posting to a large audience; it continues in the background. See the server log line \"status posted\"."})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": res})
 }

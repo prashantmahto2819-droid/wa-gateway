@@ -50,6 +50,7 @@ type Session struct {
 
 	statusMu   sync.Mutex
 	statusSeen map[string]time.Time // fingerprint of recent Status posts → when (no double posts)
+	prep       statusPrep           // background preparation of the Status audience
 
 	mu         sync.Mutex
 	client     *whatsmeow.Client
@@ -418,6 +419,7 @@ func (s *Session) onEvent(from *whatsmeow.Client, evt any) {
 			}
 		}
 		s.setStatus(StConnected, "")
+		s.schedulePrep(prepFirstWait) // slowly get the Status audience ready
 	case *events.Disconnected:
 		s.mu.Lock()
 		st := s.status

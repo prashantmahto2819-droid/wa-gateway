@@ -31,13 +31,14 @@ export async function pacingPanel(box, { admin = false } = {}) {
     ${admin ? html`<section><h3 class="mb">${ic('shield', 16)} ${t('Limits for every account')}</h3>
       <div class="form-grid">
         ${num('floor_gap', p.floor_gap, 1, 'Smallest campaign gap anyone may use', 'seconds')}
-        ${num('floor_api_gap', p.floor_api_gap, 0, 'Smallest API / auto-reply gap anyone may use', 'seconds')}</div>
+        ${num('floor_api_gap', p.floor_api_gap, 0, 'Smallest API / auto-reply gap anyone may use', 'seconds')}
+        ${num('status_max', p.status_max || 30000, 10, 'Most people one Status goes to', 'people')}</div>
       ${toggle('users_can_change', !!p.users_can_change, t('Users may change their own pace'), t('They can only go slower than these limits, never faster.'))}</section>`
     : html`<p class="hint">${t('Limits set by the administrator: campaign gap at least {a} s, API gap at least {b} s.', { a: floorGap, b: floorAPI })}</p>`}
     ${locked ? '' : html`<div class="row" style="justify-content:flex-end;gap:8px">${admin ? '' : html`<button type="button" class="btn ghost" data-reset>${t('Use the defaults')}</button>`}<button class="btn primary">${t('Save sending settings')}</button></div>`}
   </form>`.s;
   const f = box.querySelector('[data-pace]');
-  const ints = ['gap_min', 'gap_max', 'batch_size', 'batch_pause_min', 'api_gap_min', 'api_gap_max', 'reply_delay_min', 'reply_delay_max', 'floor_gap', 'floor_api_gap'];
+  const ints = ['gap_min', 'gap_max', 'batch_size', 'batch_pause_min', 'api_gap_min', 'api_gap_max', 'reply_delay_min', 'reply_delay_max', 'floor_gap', 'floor_api_gap', 'status_max'];
   f.addEventListener('submit', async (e) => {
     e.preventDefault();
     const d = {};

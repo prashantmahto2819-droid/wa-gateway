@@ -20,7 +20,7 @@ export async function render(ctx) {
     contacts: [], // saved (gateway) contacts picked
     waSel: new Set(),
     chatSel: new Set(qTo.includes('@') ? [qTo] : []),
-    aud: { mode: 'auto', tags: [], limit: '' }, // Status audience
+    aud: { mode: 'auto', tags: [], limit: '', split: true }, // Status audience
     audSel: new Set(),
     tags: null,
   };
@@ -123,8 +123,11 @@ export async function render(ctx) {
           .map(([k, i, l, d]) => html`<label class="choice"><input type="radio" name="audmode" value="${k}" ${a.mode === k ? 'checked' : ''}><b>${ic(i, 16)}${t(l)}</b><small>${t(d)}</small></label>`)}</div>
       <div data-aud-body class="mt-s"></div>
       <div class="row mt-s" style="align-items:flex-end;gap:14px">
-        <label class="field" style="max-width:200px"><span>${t('At most')}</span><input type="number" min="10" max="5000" step="10" data-aud-limit value="${a.limit}" placeholder="5000"></label>
-        <p class="hint grow">${t('Leave empty to reach everyone up to the server limit (STATUS_MAX_RECIPIENTS, default 5000). Each contact is looked up the way WhatsApp Web does, so people on WhatsApp’s newer LID system are reached too. People only see a Status if they also saved your number.')}</p></div>`.s;
+        <label class="field" style="max-width:200px"><span>${t('At most')}</span><input type="number" min="10" max="50000" step="10" data-aud-limit value="${a.limit}" placeholder="${t('everyone')}"></label>
+        <p class="hint grow">${t('Leave empty to reach everyone up to the server limit (default 30,000; Admin → Sending safety). People only see a Status if they also saved your number.')}</p></div>
+      <label class="switch mt-s"><input type="checkbox" data-aud-split ${a.split ? 'checked' : ''}><span class="track"></span><span class="switch-text"><span>${t('If WhatsApp refuses one big post, post it in parts')}</span><small>${t('Everyone still gets it; your own phone will show the status 2–3 times.')}</small></span></label>
+      <div class="note info mt-s" data-prep>${t('Checking how ready your audience is…')}</div>`.s;
+    drawPrep();
     const body = w.querySelector('[data-aud-body]');
     if (a.mode === 'tags') {
       if (!st.tags) { body.innerHTML = skel(1).s; const j = await api('GET', '/api/contacts/tags', undefined, { silent: true }); st.tags = j.ok ? j.tags || [] : []; }
@@ -135,11 +138,33 @@ export async function render(ctx) {
       else { body.innerHTML = '<div></div>'; waContactsPicker(body.firstChild, { session: st.session, selected: st.audSel, onChange: () => {} }); }
     } else body.innerHTML = '';
   }
+  // Background preparation of the Status audience (device lookups + encryption sessions).
+  let prepTimer = null;
+  async function drawPrep(start = false) {
+    clearTimeout(prepTimer);
+    const el = root.querySelector('[data-prep]'); if (!el) return;
+    if (!connected()) { el.innerHTML = notConnected(); return; }
+    const path = `/api/sessions/${encodeURIComponent(st.session)}/status-prep`;
+    if (start) await api('POST', path, {}, { silent: true });
+    const j = await api('GET', path, undefined, { silent: true });
+    if (!ctx.isCurrent() || !root.querySelector('[data-prep]')) return;
+    if (!j.ok) { el.innerHTML = ''; return; }
+    const pct = j.total ? Math.round((j.checked / j.total) * 100) : 0;
+    const btn = j.running ? '' : html`<button type="button" class="btn sm" data-a="prep-now">${ic('refresh', 14)}${t('Prepare now')}</button>`;
+    el.innerHTML = html`${ic(j.running ? 'clock' : 'shield', 16)}<span class="grow">${j.running
+      ? t('Getting your audience ready: {c} of {t} contacts checked ({p}%), {r} reachable. This runs slowly on purpose, in small steps.', { c: fmtNum(j.checked), t: fmtNum(j.total), p: pct, r: fmtNum(j.reachable) })
+      : j.known ? t('Ready: {r} people can receive your status (of {k} contacts checked). New contacts are checked when you post.', { r: fmtNum(j.known_reachable), k: fmtNum(j.known) })
+        : t('Your audience has not been prepared yet. It starts 10 minutes after the number connects and repeats daily; posting works anyway but the first big post is slower.')}
+      ${j.safe_size ? html`<br><small>${t('WhatsApp accepted up to {n} people in one post so far.', { n: fmtNum(j.safe_size) })}</small>` : ''}</span>${btn}`.s;
+    if (j.running) prepTimer = setTimeout(() => drawPrep(false), 8000);
+  }
+
   function statusAudience() {
     const a = st.aud;
     const lim = Number(root.querySelector('[data-aud-limit]')?.value || 0);
     const o = { mode: a.mode };
     if (lim > 0) o.limit = lim;
+    if (a.split) o.split = true;
     if (a.mode === 'tags') o.tags = a.tags;
     if (a.mode === 'phones') o.phones = [...st.audSel];
     return o;
@@ -166,6 +191,7 @@ export async function render(ctx) {
     if (e.target.matches('[data-csearch]')) search(e.target.value);
     if (e.target.matches('[data-phones]')) { st.phones = e.target.value; summary(); }
     if (e.target.matches('[data-aud-limit]')) st.aud.limit = e.target.value;
+    if (e.target.matches('[data-aud-split]')) st.aud.split = e.target.checked;
   });
   const search = debounce(async (q) => {
     const r = root.querySelector('[data-cres]'); if (!r) return;
@@ -217,6 +243,7 @@ export async function render(ctx) {
       const to = recipients(); if (!to.length) return toast(t('Choose who to send to.'), 'warn');
       scheduleModal(to, { now: false });
     }
+    if (a === 'prep-now') { drawPrep(true); return; }
     if (a === 'post-status') {
       const err = comp.validate() || checkStatusAudience(); if (err) return toast(err, 'warn');
       const from = sessions.find((x) => x.name === st.session);
@@ -234,7 +261,9 @@ export async function render(ctx) {
       if (!j.ok) return toast(j.error || t('Something went wrong'), 'bad');
       // Start fresh so the next post (maybe from another number) can't carry this photo or text along.
       comp.reset();
-      toast(j.message?.recipients ? t('Status posted from {n} — shared with {c} people.', { n: label, c: fmtNum(j.message.recipients) }) : t('Status posted from {n}.', { n: label }), 'ok', 7000);
+      if (j.pending) return toast(t('Posting from {n} to a large audience — it continues in the background and takes a few minutes.', { n: label }), 'ok', 9000);
+      const parts = j.message?.parts > 1 ? ' ' + t('(in {p} parts)', { p: j.message.parts }) : '';
+      toast((j.message?.recipients ? t('Status posted from {n} — shared with {c} people.', { n: label, c: fmtNum(j.message.recipients) }) : t('Status posted from {n}.', { n: label })) + parts, 'ok', 9000);
     }
     if (a === 'schedule-status') {
       const err = comp.validate() || checkStatusAudience(); if (err) return toast(err, 'warn');

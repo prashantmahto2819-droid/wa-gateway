@@ -36,6 +36,7 @@ type AdminPacing struct {
 	FloorGap       int  `json:"floor_gap"`        // nobody's campaign gap may be lower (seconds)
 	FloorAPIGap    int  `json:"floor_api_gap"`    // nobody's API gap may be lower (seconds)
 	UsersCanChange bool `json:"users_can_change"` // users may set their own (slower) pace
+	StatusMax      int  `json:"status_max"`       // most people one Status goes to (0 = .env STATUS_MAX_RECIPIENTS)
 }
 
 func boolp(b bool) *bool { return &b }
@@ -121,7 +122,7 @@ func (m *Manager) adminPacing(ctx context.Context) AdminPacing {
 		var saved AdminPacing
 		if json.Unmarshal([]byte(raw), &saved) == nil {
 			a.Pacing = a.Pacing.overlay(saved.Pacing)
-			a.FloorGap, a.FloorAPIGap, a.UsersCanChange = saved.FloorGap, saved.FloorAPIGap, saved.UsersCanChange
+			a.FloorGap, a.FloorAPIGap, a.UsersCanChange, a.StatusMax = saved.FloorGap, saved.FloorAPIGap, saved.UsersCanChange, saved.StatusMax
 		}
 	}
 	a.Pacing = a.Pacing.clamp(a)
@@ -176,6 +177,10 @@ func (a *API) saveAdminPacing(w http.ResponseWriter, r *http.Request) {
 	var body AdminPacing
 	if err := decode(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "bad_request", err)
+		return
+	}
+	if body.StatusMax < 0 || body.StatusMax > 50000 {
+		writeErr(w, http.StatusBadRequest, "bad_request", errors.New("status_max must be 0-50000"))
 		return
 	}
 	if body.FloorGap < 1 || body.FloorAPIGap < 0 {

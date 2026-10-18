@@ -100,6 +100,9 @@ type StatusAudience struct {
 	Tags   []string `json:"tags,omitempty"`   // mode=tags: contacts with any of these tags
 	Phones []string `json:"phones,omitempty"` // mode=phones: exactly these numbers
 	Limit  int      `json:"limit,omitempty"`  // at most this many people (capped by STATUS_MAX_RECIPIENTS)
+	// Split: if WhatsApp refuses one Status that big, post the same Status in
+	// 2–3 parts so everyone still gets it (your own phone shows each part).
+	Split bool `json:"split,omitempty"`
 }
 
 type statusAudKey struct{}
@@ -134,12 +137,29 @@ func (s *Session) statusRecipients(ctx context.Context, cli *whatsmeow.Client, o
 	if aud == nil {
 		aud = &StatusAudience{}
 	}
-	want := s.m.cfg.StatusMax
+	want := s.m.statusMax(ctx)
 	if aud.Limit > 0 && aud.Limit < want {
 		want = aud.Limit
 	}
 	// Collect some extra candidates: people no longer on WhatsApp drop out below.
-	limit := want + want/4 + 20
+	out, err := s.statusCandidates(ctx, cli, owner, aud, want+want/4+20)
+	if err != nil {
+		return nil, err
+	}
+	reach, missing := s.reachable(ctx, cli, out)
+	if len(reach) > want {
+		reach = reach[:want]
+	}
+	s.m.log.Info("status audience", "session", s.name, "mode", firstNonEmpty(aud.Mode, "auto"), "candidates", len(out),
+		"reachable", len(reach), "no_devices", missing)
+	if len(reach) == 0 {
+		return nil, errors.New("none of these contacts could be found on WhatsApp right now; try again in a few minutes")
+	}
+	return reach, nil
+}
+
+// statusCandidates lists who a Status could go to, best first (phone-number JIDs, no duplicates).
+func (s *Session) statusCandidates(ctx context.Context, cli *whatsmeow.Client, owner int64, aud *StatusAudience, limit int) ([]types.JID, error) {
 	me := cli.Store.GetJID().User
 	seen := map[string]bool{me: true}
 	var out []types.JID
@@ -221,16 +241,7 @@ func (s *Session) statusRecipients(ctx context.Context, cli *whatsmeow.Client, o
 	if len(out) == 0 {
 		return nil, errors.New("no one to show this Status to: save some contacts first, or choose numbers")
 	}
-	reach, missing := s.reachable(ctx, cli, out)
-	if len(reach) > want {
-		reach = reach[:want]
-	}
-	s.m.log.Info("status audience", "session", s.name, "mode", firstNonEmpty(aud.Mode, "auto"), "candidates", len(out),
-		"reachable", len(reach), "no_devices", missing)
-	if len(reach) == 0 {
-		return nil, errors.New("none of these contacts could be found on WhatsApp right now; try again in a few minutes")
-	}
-	return reach, nil
+	return out, nil
 }
 
 // reachable looks up each person's phones (devices) the way WhatsApp Web
@@ -260,6 +271,20 @@ func (s *Session) reachable(ctx context.Context, cli *whatsmeow.Client, list []t
 		}
 		return found
 	}
+	// People already looked up by the background preparation (last 24 h) need no new lookup.
+	known := map[string]prepTarget{}
+	var unknown []types.JID
+	s.prep.mu.Lock()
+	for _, j := range list {
+		if t, ok := s.prep.targets[j.User]; ok && time.Since(t.at) < 24*time.Hour {
+			known[j.User] = t
+		} else {
+			unknown = append(unknown, j)
+		}
+	}
+	s.prep.mu.Unlock()
+	list0 := list
+	list = unknown
 	byPN := hasDevices(list)
 	var out, viaLID []types.JID
 	lidOf := map[string]types.JID{}
@@ -278,16 +303,33 @@ func (s *Session) reachable(ctx context.Context, cli *whatsmeow.Client, list []t
 		byLID = hasDevices(viaLID)
 	}
 	missing := 0
-	for _, j := range list { // keep the original priority order
+	now := time.Now()
+	s.prep.mu.Lock()
+	if s.prep.targets == nil {
+		s.prep.targets = map[string]prepTarget{}
+	}
+	for _, j := range list0 { // keep the original priority order
+		if t, ok := known[j.User]; ok {
+			if t.ok {
+				out = append(out, t.jid)
+			} else {
+				missing++
+			}
+			continue
+		}
 		switch {
 		case byPN[j.User]:
 			out = append(out, j)
+			s.prep.targets[j.User] = prepTarget{jid: j, ok: true, at: now}
 		case lidOf[j.User].User != "" && byLID[lidOf[j.User].User]:
 			out = append(out, lidOf[j.User])
+			s.prep.targets[j.User] = prepTarget{jid: lidOf[j.User], ok: true, at: now}
 		default:
 			missing++
+			s.prep.targets[j.User] = prepTarget{ok: false, at: now}
 		}
 	}
+	s.prep.mu.Unlock()
 	return out, missing
 }
 

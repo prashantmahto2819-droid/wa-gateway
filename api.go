@@ -116,6 +116,8 @@ func (a *API) routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{name}/groups/{jid}/save-contacts", auth(a.saveGroupContacts))
 	mux.HandleFunc("GET /api/sessions/{name}/channels", auth(a.channels))
 	mux.HandleFunc("GET /api/sessions/{name}/wa-contacts", auth(a.waContacts))
+	mux.HandleFunc("GET /api/sessions/{name}/status-prep", auth(a.statusPrepInfo))
+	mux.HandleFunc("POST /api/sessions/{name}/status-prep", auth(a.statusPrepStart))
 	mux.HandleFunc("GET /api/link-preview", auth(a.previewTest))
 	mux.HandleFunc("POST /api/sessions/{name}/channels", auth(a.createChannel))
 	mux.HandleFunc("GET /api/sessions/{name}/channels/resolve", auth(a.resolveChannel))

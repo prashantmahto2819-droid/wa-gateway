@@ -27,6 +27,7 @@ type SendResult struct {
 	// sent again (that would make a duplicate).
 	Unconfirmed bool `json:"unconfirmed,omitempty"`
 	Recipients  int  `json:"recipients,omitempty"` // Status: how many people it was shared with
+	Parts       int  `json:"parts,omitempty"`      // Status: posted in this many parts (split option)
 }
 
 // refusedForSize reports a server refusal that a smaller Status audience may fix.
@@ -358,6 +359,20 @@ func (s *Session) send(ctx context.Context, req *SendRequest, opts sendOpts) (*S
 
 	var msgID string
 	var resp whatsmeow.SendResponse
+	var fullAud []types.JID
+	split := isStatus && req.StatusAudience != nil && req.StatusAudience.Split
+	if isStatus {
+		fullAud, _ = ctx.Value(statusAudKey{}).([]types.JID)
+		s.prep.mu.Lock()
+		safe := s.prep.safeSize
+		s.prep.mu.Unlock()
+		if split && safe > 0 && len(fullAud) > safe {
+			// Start at the size WhatsApp accepted before; the rest goes in more parts.
+			ctx = context.WithValue(ctx, statusAudKey{}, fullAud[:safe])
+			statusCount = safe
+		}
+	}
+	shrunk := false
 	for attempt := 0; ; attempt++ {
 		msgID = cli.GenerateMessageID()
 		resp, err = cli.SendMessage(ctx, to, msg, whatsmeow.SendRequestExtra{ID: msgID, MediaHandle: handle, AdditionalNodes: extraNodes,
@@ -365,10 +380,11 @@ func (s *Session) send(ctx context.Context, req *SendRequest, opts sendOpts) (*S
 		// A Status too big for WhatsApp is refused outright (nothing delivered),
 		// so it is safe to try again with the first half of the audience.
 		list, _ := ctx.Value(statusAudKey{}).([]types.JID)
-		if err == nil || !isStatus || leftGateway(err, resp) || attempt >= 3 || len(list) <= 500 || !refusedForSize(err) {
+		if err == nil || !isStatus || leftGateway(err, resp) || attempt >= 4 || len(list) <= 500 || !refusedForSize(err) {
 			break
 		}
 		s.m.log.Warn("status refused, retrying with a smaller audience", "session", s.name, "audience", len(list), "err", err)
+		shrunk = true
 		list = list[:len(list)/2]
 		statusCount = len(list)
 		ctx = context.WithValue(ctx, statusAudKey{}, list)
@@ -419,6 +435,36 @@ func (s *Session) send(ctx context.Context, req *SendRequest, opts sendOpts) (*S
 	}
 	res.ID, res.Timestamp = resp.ID, resp.Timestamp.Unix()
 	sentOK = true
+	if isStatus {
+		sentAud, _ := ctx.Value(statusAudKey{}).([]types.JID)
+		n := len(sentAud)
+		s.prep.mu.Lock()
+		if shrunk || n > s.prep.safeSize {
+			s.prep.safeSize = n // remember what WhatsApp accepts in one Status
+		}
+		s.prep.mu.Unlock()
+		res.Parts = 1
+		if split && n > 0 && n < len(fullAud) {
+			// Same Status for the rest of the audience, in parts of the accepted size.
+			for i := n; i < len(fullAud); i += n {
+				if sleepCtx(ctx, 15*time.Second) != nil {
+					break
+				}
+				part := fullAud[i:min(i+n, len(fullAud))]
+				pctx := context.WithValue(ctx, statusAudKey{}, part)
+				pid := cli.GenerateMessageID()
+				presp, perr := cli.SendMessage(pctx, to, msg, whatsmeow.SendRequestExtra{ID: pid, MediaHandle: handle, AdditionalNodes: extraNodes,
+					Timeout: 2 * time.Minute})
+				if perr != nil && !leftGateway(perr, presp) {
+					s.m.log.Warn("status part not posted", "session", s.name, "part", res.Parts+1, "err", perr)
+					break
+				}
+				res.Parts++
+				res.Recipients += len(part)
+				statusCount += len(part)
+			}
+		}
+	}
 	if isStatus {
 		phone := ""
 		if cli.Store.ID != nil {
