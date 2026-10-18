@@ -138,7 +138,9 @@ type Campaign struct {
 	Audience   Audience       `json:"audience"`
 	Schedule   Schedule       `json:"schedule"`
 	Speed      string         `json:"speed"`
-	Rotation   string         `json:"rotation"` // smart (keep each person on one number) | random
+	Rotation   string         `json:"rotation"` // smart (keep each person on one number) | random | turns (1 → 2 → 3 → 1 …)
+	GapMin     int            `json:"gap_min"`  // seconds between messages (0 = account pace)
+	GapMax     int            `json:"gap_max"`
 	CreatedAt  int64          `json:"created_at"`
 	StartedAt  int64          `json:"started_at"`
 	FinishedAt int64          `json:"finished_at"`
@@ -147,13 +149,13 @@ type Campaign struct {
 	Draft      bool           `json:"draft,omitempty"` // input only
 }
 
-const campaignCols = `id, owner_id, name, status, sessions, message, audience, sched_at, repeat, days, until, next_run, runs, speed, created_at, started_at, finished_at, rotation`
+const campaignCols = `id, owner_id, name, status, sessions, message, audience, sched_at, repeat, days, until, next_run, runs, speed, created_at, started_at, finished_at, rotation, gap_min, gap_max`
 
 func scanCampaign(row interface{ Scan(...any) error }) (*Campaign, error) {
 	var c Campaign
 	var sessions, msg, aud, days string
 	if err := row.Scan(&c.ID, &c.OwnerID, &c.Name, &c.Status, &sessions, &msg, &aud, &c.Schedule.At, &c.Schedule.Repeat, &days,
-		&c.Schedule.Until, &c.Schedule.NextRun, &c.Schedule.Runs, &c.Speed, &c.CreatedAt, &c.StartedAt, &c.FinishedAt, &c.Rotation); err != nil {
+		&c.Schedule.Until, &c.Schedule.NextRun, &c.Schedule.Runs, &c.Speed, &c.CreatedAt, &c.StartedAt, &c.FinishedAt, &c.Rotation, &c.GapMin, &c.GapMax); err != nil {
 		return nil, err
 	}
 	c.Sessions = fromJSON[[]string](sessions)
@@ -288,9 +290,20 @@ func (a *API) campaignFromRequest(r *http.Request, p *Principal, c *Campaign) er
 	switch c.Rotation {
 	case "", "smart":
 		c.Rotation = "smart"
-	case "random":
+	case "random", "turns":
 	default:
-		return errors.New("rotation must be smart or random")
+		return errors.New("rotation must be smart, random or turns")
+	}
+	if c.GapMin < 0 || c.GapMax < 0 || c.GapMin > 3600 || c.GapMax > 3600 {
+		return errors.New("gap_min / gap_max must be 0-3600 seconds")
+	}
+	if c.GapMin > 0 {
+		if floor := a.m.adminPacing(ctx).FloorGap; c.GapMin < floor {
+			return fmt.Errorf("the gap must be at least %d seconds (set by the administrator)", floor)
+		}
+		c.GapMax = max(c.GapMax, c.GapMin)
+	} else {
+		c.GapMax = 0
 	}
 	switch c.Schedule.Repeat {
 	case "", "none":
@@ -383,9 +396,9 @@ func (a *API) createCampaign(w http.ResponseWriter, r *http.Request) {
 	if c.Draft {
 		status, next = "draft", 0
 	}
-	res, err := a.m.db.ExecContext(r.Context(), `INSERT INTO campaigns(owner_id, name, status, sessions, message, audience, sched_at, repeat, days, until, next_run, speed, rotation, created_at, updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, p.UserID, c.Name, status, jsonText(c.Sessions), jsonText(c.Message), jsonText(c.Audience),
-		c.Schedule.At, c.Schedule.Repeat, jsonText(orInts(c.Schedule.Days)), c.Schedule.Until, next, c.Speed, c.Rotation, now.Unix(), now.Unix())
+	res, err := a.m.db.ExecContext(r.Context(), `INSERT INTO campaigns(owner_id, name, status, sessions, message, audience, sched_at, repeat, days, until, next_run, speed, rotation, gap_min, gap_max, created_at, updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, p.UserID, c.Name, status, jsonText(c.Sessions), jsonText(c.Message), jsonText(c.Audience),
+		c.Schedule.At, c.Schedule.Repeat, jsonText(orInts(c.Schedule.Days)), c.Schedule.Until, next, c.Speed, c.Rotation, c.GapMin, c.GapMax, now.Unix(), now.Unix())
 	if err != nil {
 		a.fail(w, err)
 		return
@@ -460,9 +473,9 @@ func (a *API) updateCampaign(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", errors.New("this schedule has no future run; check the dates"))
 		return
 	}
-	_, err := a.m.db.ExecContext(r.Context(), `UPDATE campaigns SET name=?, status=?, sessions=?, message=?, audience=?, sched_at=?, repeat=?, days=?, until=?, next_run=?, speed=?, rotation=?, updated_at=? WHERE id=?`,
+	_, err := a.m.db.ExecContext(r.Context(), `UPDATE campaigns SET name=?, status=?, sessions=?, message=?, audience=?, sched_at=?, repeat=?, days=?, until=?, next_run=?, speed=?, rotation=?, gap_min=?, gap_max=?, updated_at=? WHERE id=?`,
 		c.Name, status, jsonText(c.Sessions), jsonText(c.Message), jsonText(c.Audience), c.Schedule.At, c.Schedule.Repeat, jsonText(orInts(c.Schedule.Days)),
-		c.Schedule.Until, next, c.Speed, c.Rotation, time.Now().Unix(), old.ID)
+		c.Schedule.Until, next, c.Speed, c.Rotation, c.GapMin, c.GapMax, time.Now().Unix(), old.ID)
 	if err != nil {
 		a.fail(w, err)
 		return
@@ -518,8 +531,8 @@ func (a *API) campaignAction(w http.ResponseWriter, r *http.Request) {
 		_, _ = db.ExecContext(ctx, `UPDATE campaigns SET status='scheduled', next_run=?, updated_at=? WHERE id=?`, now, now, c.ID)
 		a.m.pokeScheduler()
 	case "duplicate":
-		res, err := db.ExecContext(ctx, `INSERT INTO campaigns(owner_id, name, status, sessions, message, audience, sched_at, repeat, days, until, next_run, speed, rotation, created_at, updated_at)
-			SELECT owner_id, name || ' (copy)', 'draft', sessions, message, audience, 0, repeat, days, until, 0, speed, rotation, ?, ? FROM campaigns WHERE id=?`, now, now, c.ID)
+		res, err := db.ExecContext(ctx, `INSERT INTO campaigns(owner_id, name, status, sessions, message, audience, sched_at, repeat, days, until, next_run, speed, rotation, gap_min, gap_max, created_at, updated_at)
+			SELECT owner_id, name || ' (copy)', 'draft', sessions, message, audience, 0, repeat, days, until, 0, speed, rotation, gap_min, gap_max, ?, ? FROM campaigns WHERE id=?`, now, now, c.ID)
 		if err != nil {
 			a.fail(w, err)
 			return
@@ -593,7 +606,8 @@ type enqueueResult struct {
 }
 
 // enqueue puts messages in the outbox, spreading people over the pool.
-func (m *Manager) enqueue(ctx context.Context, owner int64, pool []string, campaignID int64, label string, msgs []SendRequest, sendAfter int64, factor int, random bool) (*enqueueResult, error) {
+func (m *Manager) enqueue(ctx context.Context, owner int64, pool []string, campaignID int64, label string, msgs []SendRequest, sendAfter int64, factor int, rotation string) (*enqueueResult, error) {
+	random, turns := rotation == "random", rotation == "turns"
 	poolCol := ""
 	if len(pool) > 1 {
 		poolCol = strings.Join(pool, ",")
@@ -625,6 +639,8 @@ func (m *Manager) enqueue(ctx context.Context, owner int64, pool []string, campa
 		session := pool[len(rows)%len(pool)]
 		if !isPerson {
 			session = pool[0] // groups, channels and Status are posted by the first number
+		} else if turns && len(pool) > 1 {
+			session = "" // assigned in turn order below, after sorting by priority
 		} else if random && len(pool) > 1 {
 			session = pool[mrand.IntN(len(pool))] // "random number": each person gets a random sender
 		} else if len(pool) > 1 {
@@ -640,6 +656,17 @@ func (m *Manager) enqueue(ctx context.Context, owner int64, pool []string, campa
 			prio = 3 // posts first
 		}
 		rows = append(rows, row{session: session, to: key, payload: string(p), priority: prio})
+	}
+	if turns && len(pool) > 1 {
+		// Highest priority first, then hand out numbers 1, 2, 3, 1, 2, 3 …
+		slices.SortStableFunc(rows, func(a, b row) int { return b.priority - a.priority })
+		k := 0
+		for i := range rows {
+			if rows[i].session == "" {
+				rows[i].session = pool[k%len(pool)]
+				k++
+			}
+		}
 	}
 	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -775,7 +802,7 @@ func (m *Manager) startCampaign(ctx context.Context, id int64) {
 	msgs := m.expandAudience(ctx, c)
 	next := nextRun(c.Schedule, now)
 	label := fmt.Sprintf("c%d", c.ID)
-	res, err := m.enqueue(ctx, c.OwnerID, pool, c.ID, label, msgs, 0, speedFactor(c.Speed), c.Rotation == "random")
+	res, err := m.enqueue(ctx, c.OwnerID, pool, c.ID, label, msgs, 0, speedFactor(c.Speed), c.Rotation)
 	if err != nil {
 		fail(err.Error())
 		return

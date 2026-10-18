@@ -204,7 +204,7 @@ func (s *Session) runAutoReplies(chat types.JID, isGroup, firstTime bool, text s
 		if isGroup {
 			req.ReplyTo = &ReplyRef{ID: msgID, Sender: sender.String(), Text: truncate(text, 200)}
 		}
-		res, err := s.send(ctx, &req, sendOpts{direct: true})
+		res, err := s.send(ctx, &req, sendOpts{direct: true, reply: true})
 		s.recordDirect(ctx, &req, res, err)
 		if err != nil {
 			s.m.log.Warn("auto-reply not sent", "session", s.name, "rule", rule.ID, "err", err)

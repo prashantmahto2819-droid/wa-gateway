@@ -223,7 +223,9 @@ async function settings(ctx, body, _a, sub) {
     <section class="panel"><div class="panel-head"><h2>${t('Messages to users')}</h2></div><div class="panel-body stack">
       <label class="field"><span>${t('Announcement bar')}</span><input name="announcement" value="${s.announcement || ''}" placeholder="${t('e.g. Maintenance on Sunday 2–3 AM')}"><small>${t('Shown at the top of every dashboard page. Leave empty to hide.')}</small></label>
       <label class="field"><span>${t('Payment note')}</span><textarea name="payment_note" rows="3">${s.payment_note || ''}</textarea><small>${t('How to pay (UPI, bank transfer). Shown on the pricing page.')}</small></label></div></section>
-    <div class="row" style="justify-content:flex-end"><button class="btn primary lg">${t('Save site settings')}</button></div></form>`.s;
+    <div class="row" style="justify-content:flex-end"><button class="btn primary lg">${t('Save site settings')}</button></div></form>
+    <section class="panel mt" id="sending"><div class="panel-head"><h2>${ic('shield', 18)} ${t('Sending safety — all accounts')}</h2></div><div class="panel-body" data-pacing></div></section>`.s;
+  import('/static/app/pacing.js').then(({ pacingPanel }) => pacingPanel(body.querySelector('[data-pacing]'), { admin: true }));
   body.querySelector('[data-f]').addEventListener('submit', async (e) => {
     e.preventDefault(); const d = formData(e.target); d.trial_plan_id = +d.trial_plan_id || 0; d.trial_days = +d.trial_days || 0;
     if ((await api('PATCH', '/api/admin/settings', d)).ok) toast(t('Site settings saved'));

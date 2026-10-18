@@ -195,6 +195,10 @@ CREATE TABLE IF NOT EXISTS webhook_endpoints (
 	last_at     INTEGER NOT NULL DEFAULT 0,
 	created_at  INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS user_pacing (
+	user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+	data    TEXT NOT NULL DEFAULT '{}'
+);
 CREATE TABLE IF NOT EXISTS settings (
 	key   TEXT PRIMARY KEY,
 	value TEXT NOT NULL
@@ -247,6 +251,8 @@ func migrate2(db *sql.DB) error {
 		{"gw_outbox", "speed_factor", "INTEGER NOT NULL DEFAULT 1"},
 		{"gw_outbox", "owner_id", "INTEGER NOT NULL DEFAULT 0"},
 		{"campaigns", "rotation", "TEXT NOT NULL DEFAULT 'smart'"},
+		{"campaigns", "gap_min", "INTEGER NOT NULL DEFAULT 0"},
+		{"campaigns", "gap_max", "INTEGER NOT NULL DEFAULT 0"},
 	}
 	for _, a := range adds {
 		if err := addColumn(db, a.table, a.col, a.def); err != nil {

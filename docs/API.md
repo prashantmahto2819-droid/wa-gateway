@@ -90,6 +90,7 @@ ApiKey    { "id":1, "name":"BizCRT", "prefix":"vr_ab12", "created_at":0, "last_u
 | GET/POST | `/api/webhooks` | list / create `{url, events[]}` → includes full `secret` once |
 | PATCH/DELETE | `/api/webhooks/{id}` | `{url?, events?, active?}` |
 | POST | `/api/webhooks/{id}/test` | sends `{"event":"test"}` |
+| GET/PUT | `/api/me/pacing` | the account's sending pace: `{gap_min, gap_max, batch_size, batch_pause_min, api_gap_min, api_gap_max, typing, reply_typing, reply_delay_min, reply_delay_max}` (seconds / minutes; 0 = inherit; `batch_size:-1` = no breaks). GET also returns `effective`, `defaults`, `floor_gap`, `floor_api_gap`, `can_change` |
 | GET/PATCH | `/api/me/ai` | AI settings for AI auto-replies: GET `{ok, base_url, model, has_key}`; PATCH `{base_url?, model?, api_key?}` (any OpenAI-compatible endpoint: OpenAI, Gemini, Groq, OpenRouter…). `POST /api/me/ai/test {prompt}` → `{ok, reply}` |
 | GET | `/api/stats?days=14` | `{ok, days:[{day:"2026-10-17",sent,failed,received}], totals:{sent,failed,received}}` |
 
@@ -186,11 +187,14 @@ CSV columns: `phone,name,email,tags,notes` + any extra column becomes a custom f
 | GET/POST | `/api/autoreplies` | |
 | PATCH/DELETE | `/api/autoreplies/{id}` | |
 
-Rotation (several `sessions`): `smart` keeps each person on one number (the one they chatted with, else the least busy); `random` picks a random number per person. Groups, channels and Status are always posted by the first number.
+Rotation (several `sessions`): `smart` keeps each person on one number (the one they chatted with, else the least busy); `random` picks a random number per person; `turns` sends one message at a time across the numbers in order (1 → 2 → 3 → 1 …) with the campaign gap between consecutive messages — a number that misses its turn for 45 s (offline, at its limit, quiet hours) is skipped for 10 minutes. `gap_min`/`gap_max` (seconds) set the campaign's own gap and replace `speed`; they can't be below the admin floor. Groups, channels and Status are always posted by the first number.
 
 Speed: `safe` = delays ×2, `normal` = configured delays, `slow` = ×4. Repeat: `daily`, `weekly` (`days`: 0=Sun…6=Sat), `monthly` (same date), stops after `until`.
 
 ## Admin (super-admin only)
+
+`GET/PUT /api/admin/pacing` — default pace for every account plus hard floors: the pacing fields above and `floor_gap`, `floor_api_gap` (seconds nobody may go below) and `users_can_change`.
+
 
 | Method | Path | Notes |
 |---|---|---|

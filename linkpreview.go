@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"image"
 	"image/color"
@@ -10,7 +11,6 @@ import (
 	_ "image/gif"
 	"image/jpeg"
 	_ "image/png"
-	"encoding/base64"
 	"io"
 	"log/slog"
 	"net/http"

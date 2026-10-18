@@ -59,6 +59,8 @@ func (a *API) routes() http.Handler {
 	mux.HandleFunc("PATCH /api/me", auth(a.updateMe))
 	mux.HandleFunc("POST /api/me/password", auth(a.changePassword))
 	mux.HandleFunc("GET /api/me/ai", auth(a.getAI))
+	mux.HandleFunc("GET /api/me/pacing", auth(a.getMyPacing))
+	mux.HandleFunc("PUT /api/me/pacing", auth(a.saveMyPacing))
 	mux.HandleFunc("PATCH /api/me/ai", auth(a.setAI))
 	mux.HandleFunc("POST /api/me/ai/test", auth(a.testAI))
 	mux.HandleFunc("GET /api/licence", auth(a.licenceInfo))
@@ -168,6 +170,8 @@ func (a *API) routes() http.Handler {
 	mux.HandleFunc("GET /api/admin/activations", server(a.adminActivations))
 	mux.HandleFunc("GET /api/admin/licence-server", server(a.adminLicenceServer))
 	mux.HandleFunc("GET /api/admin/settings", admin(a.adminSettings))
+	mux.HandleFunc("GET /api/admin/pacing", admin(a.getAdminPacing))
+	mux.HandleFunc("PUT /api/admin/pacing", admin(a.saveAdminPacing))
 	mux.HandleFunc("PATCH /api/admin/settings", admin(a.adminSaveSettings))
 	mux.HandleFunc("GET /api/admin/inbox", admin(a.adminInbox))
 	mux.HandleFunc("POST /api/admin/inbox/{id}/read", admin(a.adminInboxRead))
@@ -752,7 +756,11 @@ func (a *API) doEnqueue(w http.ResponseWriter, r *http.Request, pool []string, b
 	if s, err := a.m.get(pool[0]); err == nil {
 		owner = s.owner()
 	}
-	res, err := a.m.enqueue(ctx, owner, pool, 0, body.Campaign, msgs, body.SendAfter, 1, body.Random)
+	rot := ""
+	if body.Random {
+		rot = "random"
+	}
+	res, err := a.m.enqueue(ctx, owner, pool, 0, body.Campaign, msgs, body.SendAfter, 1, rot)
 	if err != nil {
 		a.fail(w, err)
 		return

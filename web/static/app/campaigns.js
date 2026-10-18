@@ -81,6 +81,7 @@ async function wizard(ctx) {
     schedule: { mode: 'now', at: 0, repeat: 'none', days: [1, 2, 3, 4, 5], until: 0, ...(base.schedule || {}) },
     speed: base.speed || 'safe',
     rotation: base.rotation || 'smart',
+    gapMin: base.gap_min || 0, gapMax: base.gap_max || 0,
     versions: [{ ...(base.message || { text: '' }), variants: undefined }, ...((base.message && base.message.variants) || [])],
     vi: 0,
     waSel: new Set(),
@@ -124,7 +125,8 @@ async function wizard(ctx) {
         </fieldset>
         <fieldset data-rot ${w.sessions.length > 1 ? '' : 'hidden'}><legend>${t('With several numbers')}</legend><div class="choice-grid">
           <label class="choice"><input type="radio" name="rotation" value="smart" ${w.rotation !== 'random' ? 'checked' : ''}><b>${ic('shield', 16)}${t('Smart (recommended)')}</b><small>${t('Each person always hears from the same number — the one they chatted with, else the least busy.')}</small></label>
-          <label class="choice"><input type="radio" name="rotation" value="random" ${w.rotation === 'random' ? 'checked' : ''}><b>${ic('refresh', 16)}${t('Random number')}</b><small>${t('Each person gets the message from a randomly chosen number.')}</small></label></div></fieldset></div>`.s;
+          <label class="choice"><input type="radio" name="rotation" value="turns" ${w.rotation === 'turns' ? 'checked' : ''}><b>${ic('refresh', 16)}${t('Take turns (1 → 2 → 3 → 1)')}</b><small>${t('One message at a time: number 1, then after the gap number 2, then 3, then back to 1. A number that is offline or at its limit is skipped.')}</small></label>
+          <label class="choice"><input type="radio" name="rotation" value="random" ${w.rotation === 'random' ? 'checked' : ''}><b>${ic('sparkle', 16)}${t('Random number')}</b><small>${t('Each person gets the message from a randomly chosen number.')}</small></label></div></fieldset></div>`.s;
       body.querySelector('[name=cname]').focus();
     } else if (w.step === 2) {
       body.innerHTML = html`<div class="row between mb"><h2>${t('Message')}</h2><button class="btn sm ghost" data-a="tpl">${ic('template', 15)}${t('Load a template')}</button></div>
@@ -152,7 +154,12 @@ async function wizard(ctx) {
         </div>
         <fieldset><legend>${t('Speed')}</legend><div class="choice-grid">
           ${[['safe', 'shield', 'Safe', 'Recommended. Waits about twice the normal gap between messages.'], ['normal', 'send', 'Normal', 'Uses the server’s standard gaps. For warm, engaged lists.'], ['slow', 'clock', 'Very slow', 'Four times the gap. Best for new numbers and cold lists.']]
-            .map(([k, i, l, d]) => html`<label class="choice"><input type="radio" name="speed" value="${k}" ${w.speed === k ? 'checked' : ''}><b>${ic(i, 16)}${t(l)}</b><small>${t(d)}</small></label>`)}</div></fieldset></div>`.s;
+            .map(([k, i, l, d]) => html`<label class="choice"><input type="radio" name="speed" value="${k}" ${!w.gapMin && w.speed === k ? 'checked' : ''}><b>${ic(i, 16)}${t(l)}</b><small>${t(d)}</small></label>`)}
+          <label class="choice"><input type="radio" name="speed" value="custom" ${w.gapMin ? 'checked' : ''}><b>${ic('settings', 16)}${t('My own gap')}</b><small>${t('Set exactly how many seconds between messages.')}</small></label></div>
+          <div class="form-grid mt-s" data-gap ${w.gapMin ? '' : 'hidden'}>
+            <label class="field"><span>${t('Gap between messages — from')}</span><div class="input-group"><input type="number" name="gap_min" min="1" value="${w.gapMin || 45}"><span class="addon">${t('seconds')}</span></div></label>
+            <label class="field"><span>${t('to (random in between)')}</span><div class="input-group"><input type="number" name="gap_max" min="1" value="${w.gapMax || 90}"><span class="addon">${t('seconds')}</span></div></label>
+            <p class="hint full">${w.rotation === 'turns' && w.sessions.length > 1 ? t('With "take turns" this is the gap between any two messages, so each of your {n} numbers sends about every {n}× this time.', { n: w.sessions.length }) : t('Each number waits this long between its messages. The administrator may set a minimum.')}</p></div></fieldset></div>`.s;
     } else if (w.step === 5) {
       drawReview();
     }
@@ -207,7 +214,8 @@ async function wizard(ctx) {
     const a = w.aud, sc = w.schedule;
     const n = estimateTotal();
     const pool = Math.max(1, w.sessions.length);
-    const secs = (n * 45 * SPEED[w.speed]) / pool;
+    const per = w.gapMin ? (w.gapMin + w.gapMax) / 2 : 45 * SPEED[w.speed];
+    const secs = w.rotation === 'turns' ? n * per : (n * per) / pool;
     const whenTxt = sc.mode === 'now' ? t('Starts right away') : fmtDate(sc.at) + (sc.repeat !== 'none' ? ' · ' + t({ daily: 'repeats daily', weekly: 'repeats weekly', monthly: 'repeats monthly' }[sc.repeat]) + (sc.repeat === 'weekly' ? ' (' + sc.days.map((d) => t(DAYS[d])).join(', ') + ')' : '') + (sc.until ? ' ' + t('until {d}', { d: fmtDate(sc.until, false) }) : '') : '');
     body.innerHTML = html`<div class="stack" style="gap:20px">
       <div class="estimate"><div><small>${t('Recipients')}</small><br><b class="tnum">${fmtNum(n)}</b></div><div><small>${t('Estimated time')}</small><br><b>${fmtDuration(secs)}</b></div><div><small>${t('Numbers sharing the load')}</small><br><b>${pool}</b></div>
@@ -218,9 +226,9 @@ async function wizard(ctx) {
           <div><dt>${t('From')}</dt><dd>${w.sessions.map((s) => sessionName(sessions.find((x) => x.name === s) || { name: s })).join(', ')}</dd></div>
           <div><dt>${t('Audience')}</dt><dd>${[a.tags.length && t('Tags') + ': ' + a.tags.join(', '), a.exclude_tags.length && t('Excluding') + ': ' + a.exclude_tags.join(', '), a.contacts.length && t('{n} contacts', { n: a.contacts.length }), allPhones().length && t('{n} numbers', { n: allPhones().length }), a.groups.length && t('{n} groups', { n: a.groups.length }), a.channels.length && t('{n} channels', { n: a.channels.length }), a.statuses && t('My status')].filter(Boolean).join(' · ') || '—'}</dd></div>
           ${w.versions.length > 1 ? html`<div><dt>${t('Message versions')}</dt><dd>${t('{n}, picked at random per person', { n: w.versions.length })}</dd></div>` : ''}
-          ${w.sessions.length > 1 ? html`<div><dt>${t('Number choice')}</dt><dd>${w.rotation === 'random' ? t('Random number') : t('Smart (recommended)')}</dd></div>` : ''}
+          ${w.sessions.length > 1 ? html`<div><dt>${t('Number choice')}</dt><dd>${w.rotation === 'random' ? t('Random number') : w.rotation === 'turns' ? t('Take turns (1 → 2 → 3 → 1)') : t('Smart (recommended)')}</dd></div>` : ''}
           <div><dt>${t('When')}</dt><dd>${whenTxt}</dd></div>
-          <div><dt>${t('Speed')}</dt><dd>${t({ safe: 'Safe', normal: 'Normal', slow: 'Very slow' }[w.speed])}</dd></div>
+          <div><dt>${t('Speed')}</dt><dd>${w.gapMin ? t('Every {a}–{b} seconds', { a: w.gapMin, b: w.gapMax }) : t({ safe: 'Safe', normal: 'Normal', slow: 'Very slow' }[w.speed])}</dd></div>
         </dl>
         <div><p class="preview-label">${ic('eye', 14)}${t('Message preview')}</p><div class="chat"><div class="chat-body" data-prev></div></div></div>
       </div>
@@ -251,7 +259,9 @@ async function wizard(ctx) {
       w.schedule.repeat = f('repeat').value;
       w.schedule.days = $$('[name=days]:checked', body).map((x) => +x.value);
       w.schedule.until = f('until').value ? Math.floor(new Date(f('until').value + 'T23:59:59').getTime() / 1000) : 0;
-      w.speed = body.querySelector('[name=speed]:checked')?.value || 'safe';
+      const sp = body.querySelector('[name=speed]:checked')?.value || 'safe';
+      if (sp === 'custom') { w.gapMin = Math.max(1, Math.round(+f('gap_min').value || 0)); w.gapMax = Math.max(w.gapMin, Math.round(+f('gap_max').value || 0)); w.speed = 'normal'; }
+      else { w.speed = sp; w.gapMin = w.gapMax = 0; }
     }
   }
   function check(step) {
@@ -267,7 +277,7 @@ async function wizard(ctx) {
   }
   function payload(draft) {
     const sc = w.schedule;
-    const p = { name: w.name || t('Untitled'), sessions: w.sessions, message: w.message, audience: { ...w.aud, phones: allPhones() }, speed: w.speed, rotation: w.rotation, draft: !!draft };
+    const p = { name: w.name || t('Untitled'), sessions: w.sessions, message: w.message, audience: { ...w.aud, phones: allPhones() }, speed: w.speed, rotation: w.rotation, gap_min: w.gapMin || 0, gap_max: w.gapMax || 0, draft: !!draft };
     if (sc.mode === 'later') p.schedule = { at: sc.at, repeat: sc.repeat, days: sc.repeat === 'weekly' ? sc.days : [], until: sc.until || 0 };
     return p;
   }
@@ -293,6 +303,7 @@ async function wizard(ctx) {
   });
   body.addEventListener('change', (e) => {
     if (e.target.name === 'when') body.querySelector('[data-later]').hidden = e.target.value !== 'later';
+    if (e.target.name === 'speed') body.querySelector('[data-gap]').hidden = e.target.value !== 'custom';
     if (e.target.name === 'repeat') { body.querySelector('[data-days]').hidden = e.target.value !== 'weekly'; body.querySelector('[data-until]').hidden = e.target.value === 'none'; }
     if (e.target.name === 'statuses') audSummary();
     if (e.target.name === 'sess') { const r = body.querySelector('[data-rot]'); if (r) r.hidden = $$('[name=sess]:checked', body).length < 2; }

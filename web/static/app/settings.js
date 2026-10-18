@@ -1,6 +1,7 @@
 import { api, html, ic, t, toast, getLang, skel } from '/static/app/core.js';
 import { setLang } from '/static/i18n.js';
 import { setTheme } from '/static/app.js';
+import { pacingPanel } from '/static/app/pacing.js';
 
 const PRESETS = [
   ['OpenAI', 'https://api.openai.com/v1', 'gpt-4o-mini'],
@@ -32,7 +33,9 @@ export async function render(ctx) {
           <div class="field"><span class="field-label">${t('Language')}</span><div class="seg lang" role="radiogroup">${[['en', 'English'], ['hi', 'हिंदी']].map(([k, l]) => html`<button role="radio" data-lang-pick="${k}" aria-checked="${getLang() === k}" aria-selected="${getLang() === k}">${l}</button>`)}</div></div></div></section>
       </div>
       <form class="panel" data-ai><div class="panel-head"><h2>${ic('sparkle', 18)} ${t('AI assistant')}</h2></div><div class="panel-body stack" data-ai-body>${skel(5)}</div></form>
-    </div></div>`.s;
+    </div>
+    <section class="panel mt" id="sending"><div class="panel-head"><h2>${ic('shield', 18)} ${t('Sending safety')}</h2></div><div class="panel-body" data-pacing></div></section></div>`.s;
+  pacingPanel(root.querySelector('[data-pacing]'));
 
   root.querySelector('[data-profile]').addEventListener('submit', async (e) => {
     e.preventDefault();

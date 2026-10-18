@@ -209,6 +209,7 @@ type sendOpts struct {
 	direct bool // API call (not queue): enforce DIRECT_GAP and record a row
 	slow   bool // health guard: half the new-contact allowance
 	force  bool // Status: post even if the same one went out in the last 30 minutes
+	reply  bool // auto-reply: "reading" pause + reply typing setting
 }
 
 func (s *Session) send(ctx context.Context, req *SendRequest, opts sendOpts) (*SendResult, error) {
@@ -304,10 +305,20 @@ func (s *Session) send(ctx context.Context, req *SendRequest, opts sendOpts) (*S
 		return &SendResult{To: to.String(), NewContact: newContact}, errors.New("buttons and lists can't be posted to channels or Status; use text or a poll")
 	}
 
+	pace := s.m.pacing(ctx, owner)
+	if opts.reply && pace.ReplyDelayMax > 0 {
+		// A person reads the message before answering.
+		if err := sleepCtx(ctx, s.randDur(secs(pace.ReplyDelayMin), secs(pace.ReplyDelayMax))); err != nil {
+			return nil, err
+		}
+	}
 	s.sendMu.Lock()
 	defer s.sendMu.Unlock()
 	if opts.direct {
-		if wait := s.m.cfg.DirectGap - time.Since(s.lastSend); wait > 0 {
+		// API, webhook-triggered and auto-reply messages keep the account's
+		// minimum gap per number (set by the admin / user).
+		gap := s.randDur(secs(pace.APIGapMin), secs(pace.APIGapMax))
+		if wait := gap - time.Since(s.lastSend); wait > 0 {
 			if err := sleepCtx(ctx, wait); err != nil {
 				return nil, err
 			}
@@ -315,7 +326,11 @@ func (s *Session) send(ctx context.Context, req *SendRequest, opts sendOpts) (*S
 	}
 
 	isChat := to.Server != types.NewsletterServer && !isStatus
-	typing := s.m.cfg.Typing && req.kind() != "poll" && req.kind() != "list" && req.kind() != "carousel"
+	typingOn := *pace.Typing
+	if opts.reply {
+		typingOn = *pace.ReplyTyping
+	}
+	typing := typingOn && req.kind() != "poll" && req.kind() != "list" && req.kind() != "carousel"
 	if req.Typing != nil {
 		typing = *req.Typing
 	}
@@ -632,20 +647,45 @@ func (s *Session) queueStep(ctx context.Context, batch *int) time.Duration {
 	}
 	slow := h.State == "slow"
 
-	var id int64
+	var id, campaignID int64
 	var attempts int
 	var payload, campaign, toAddr string
 	var rowFactor int
-	err := s.m.db.QueryRowContext(ctx, `SELECT id, payload, campaign, attempts, to_addr, speed_factor FROM gw_outbox
-		WHERE session=? AND status='queued' AND not_before<=? ORDER BY priority DESC, id LIMIT 1`, s.name, now.Unix()).
-		Scan(&id, &payload, &campaign, &attempts, &toAddr, &rowFactor)
-	if errors.Is(err, sql.ErrNoRows) {
-		*batch = 0
-		return 5 * time.Minute // woken early by new messages
+	var cp campaignPace
+	type cand struct {
+		id, cid               int64
+		payload, campaign, to string
+		attempts, factor      int
 	}
+	var cands []cand
+	rows, err := s.m.db.QueryContext(ctx, `SELECT id, payload, campaign, attempts, to_addr, speed_factor, campaign_id FROM gw_outbox
+		WHERE session=? AND status='queued' AND not_before<=? ORDER BY priority DESC, id LIMIT 30`, s.name, now.Unix())
 	if err != nil {
 		s.m.log.Error("queue read failed", "err", err)
 		return time.Minute
+	}
+	for rows.Next() {
+		var c cand
+		if rows.Scan(&c.id, &c.payload, &c.campaign, &c.attempts, &c.to, &c.factor, &c.cid) == nil {
+			cands = append(cands, c)
+		}
+	}
+	rows.Close()
+	if len(cands) == 0 {
+		*batch = 0
+		return 5 * time.Minute // woken early by new messages
+	}
+	found := false
+	for _, c := range cands {
+		p := s.m.campaignPace(ctx, c.cid)
+		if s.m.myTurn(c.cid, p, s.name, now) {
+			id, payload, campaign, attempts, toAddr, rowFactor, campaignID, cp = c.id, c.payload, c.campaign, c.attempts, c.to, c.factor, c.cid, p
+			found = true
+			break
+		}
+	}
+	if !found {
+		return 3 * time.Second // a "take turns" campaign: another number goes first
 	}
 	var req SendRequest
 	if err := json.Unmarshal([]byte(payload), &req); err != nil {
@@ -709,16 +749,29 @@ func (s *Session) queueStep(ctx context.Context, batch *int) time.Duration {
 			now.Add(3*time.Minute).Unix(), err.Error(), id)
 	}
 
+	pace := s.m.pacing(ctx, s.owner())
+	gmin, gmax := secs(pace.GapMin), secs(pace.GapMax)
 	factor := time.Duration(max(rowFactor, 1)) // campaign speed: safe ×2, slow ×4
+	if cp.gapMin > 0 {                         // the campaign's own gap replaces the speed setting
+		gmin, gmax, factor = secs(cp.gapMin), secs(max(cp.gapMax, cp.gapMin)), 1
+	}
 	if slow {
 		factor *= 2
 	}
-	*batch++
-	if cfg.BatchSize > 0 && *batch >= cfg.BatchSize {
-		*batch = 0
-		return factor * s.randDur(cfg.BatchPause, cfg.BatchPause+cfg.BatchPause/2)
+	batchPause := secs(pace.BatchPauseMin * 60)
+	if cp.rotation == "turns" {
+		// The campaign's gap is between consecutive messages of any number;
+		// the turn order keeps each number waiting for its next turn.
+		gap := factor * s.randDur(gmin, gmax)
+		s.m.tookTurn(campaignID, cp, s.name, gap, pace.BatchSize, batchPause)
+		return gap
 	}
-	return factor * s.randDur(cfg.MinDelay, cfg.MaxDelay)
+	*batch++
+	if pace.BatchSize > 0 && *batch >= pace.BatchSize {
+		*batch = 0
+		return factor * s.randDur(batchPause, batchPause+batchPause/2)
+	}
+	return factor * s.randDur(gmin, gmax)
 }
 
 func (s *Session) finish(ctx context.Context, id int64, campaign, status, errMsg string, res *SendResult) {

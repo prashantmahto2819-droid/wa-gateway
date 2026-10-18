@@ -42,6 +42,9 @@ type Manager struct {
 
 	mu       sync.RWMutex
 	sessions map[string]*Session
+
+	pace      pacingCache // sending pace per owner (admin + user settings)
+	turnsBook turnBook    // "take turns" campaigns
 }
 
 func newManager(ctx context.Context, cfg *Config, db *sql.DB, hooks *Webhooks, lic *Licensing, log *slog.Logger, waLogLevel string) (*Manager, error) {

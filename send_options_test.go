@@ -3,14 +3,14 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"image"
 	pngenc "image/png"
+	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"errors"
-	"fmt"
-	"math/rand/v2"
 	"regexp"
 	"strings"
 	"testing"
@@ -135,7 +135,7 @@ func TestCampaignRotationAndStatusSchedule(t *testing.T) {
 	for i := range msgs {
 		msgs[i] = SendRequest{To: fmt.Sprintf("9190000%05d", i), Text: "x"}
 	}
-	res, err := env.api.m.enqueue(context.Background(), 1, []string{a, b}, 0, "rnd", msgs, time.Now().Add(time.Hour).Unix(), 1, true)
+	res, err := env.api.m.enqueue(context.Background(), 1, []string{a, b}, 0, "rnd", msgs, time.Now().Add(time.Hour).Unix(), 1, "random")
 	if err != nil {
 		t.Fatal(err)
 	}

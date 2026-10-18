@@ -790,3 +790,6 @@ dl.kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .b-linkcard.real img { width: 100%; max-height: 160px; object-fit: cover; display: block; }
 .b-linkcard.real > div { padding: 7px 9px; }
 .b-linkcard.real small.desc { color: inherit; opacity: .8; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.input-group > .addon { display: inline-flex; align-items: center; padding: 0 10px; border: 1px solid var(--line-strong); border-left: 0; border-radius: 0 var(--r-sm, 8px) var(--r-sm, 8px) 0; background: var(--card-2); color: var(--muted); font-size: 13px; white-space: nowrap; }
+.input-group > input { min-width: 0; flex: 1; }
+[data-pace] h3 { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
