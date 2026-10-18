@@ -2,6 +2,7 @@ import { api, html, raw, ic, t, fmtNum, fmtDate, relTime, pill, campaignTone, sk
 import { createComposer, summarize } from '/static/app/composer.js';
 import { loadTemplate } from '/static/app/send.js';
 import { waContactsPicker, chatsPicker } from '/static/app/pickers.js';
+import { listsPicker } from '/static/app/lists.js';
 
 const STATUSES = ['all', 'draft', 'scheduled', 'running', 'paused', 'done', 'cancelled'];
 const STATUS_LABEL = { draft: 'Draft', scheduled: 'Scheduled', running: 'Running', paused: 'Paused', done: 'Done', cancelled: 'Cancelled' };
@@ -76,7 +77,8 @@ async function wizard(ctx) {
     step: Math.min(5, Math.max(1, startStep)),
     name: base.name || '', sessions: base.sessions || sessions.filter((s) => s.status === 'connected').slice(0, 1).map((s) => s.name),
     message: base.message || { text: '' },
-    aud: { contacts: [], tags: [], exclude_tags: [], phones: [], groups: [], channels: [], statuses: false, ...(base.audience || {}) },
+    aud: { contacts: [], tags: [], exclude_tags: [], phones: [], groups: [], channels: [], statuses: false, lists: [], ...(base.audience || {}) },
+    listSel: new Set(base.audience?.lists || []), listsMeta: [],
     contactObjs: [],
     schedule: { mode: 'now', at: 0, repeat: 'none', days: [1, 2, 3, 4, 5], until: 0, ...(base.schedule || {}) },
     speed: base.speed || 'safe',
@@ -169,6 +171,7 @@ async function wizard(ctx) {
   async function drawAudience() {
     const a = w.aud;
     body.innerHTML = html`<div class="stack" style="gap:22px">
+      <fieldset><legend>${t('Saved lists')}</legend><div data-lists></div></fieldset>
       <fieldset><legend>${t('Contacts by tag')}</legend>
         <p class="hint" style="margin:-6px 0 10px">${t('Click once to include, again to exclude, a third time to clear. Opted-out contacts are always skipped.')}</p>
         ${tags.length ? html`<div class="tag-pick" data-tags>${tags.map((x) => html`<button type="button" data-tag="${x.tag}" class="${a.tags.includes(x.tag) ? 'inc' : a.exclude_tags.includes(x.tag) ? 'exc' : ''}" aria-pressed="${a.tags.includes(x.tag) ? 'true' : a.exclude_tags.includes(x.tag) ? 'mixed' : 'false'}">${x.tag}<span class="badge">${fmtNum(x.count)}</span></button>`)}</div>`
@@ -184,6 +187,7 @@ async function wizard(ctx) {
       <fieldset><legend>${t('Your status')}</legend>${raw(`<label class="switch"><input type="checkbox" name="statuses" ${a.statuses ? 'checked' : ''}><span class="track"></span><span class="switch-text"><span>${t('Also post this message to my Status')}</span><small>${t('Text and photo messages only.')}</small></span></label>`)}</fieldset>
       <div class="note info" data-aud-sum></div></div>`.s;
     drawPicked(); audSummary();
+    listsPicker(body.querySelector('[data-lists]'), { selected: w.listSel, onChange: audSummary }).then((meta) => { w.listsMeta = meta || []; audSummary(); });
     body.querySelector('[name=phones]').addEventListener('input', audSummary);
     const s = w.sessions[0];
     const wa = body.querySelector('[data-wa]'), gl = body.querySelector('[data-gl]');
@@ -206,7 +210,7 @@ async function wizard(ctx) {
   }
   function estimateTotal() {
     const a = w.aud;
-    return tags.filter((x) => a.tags.includes(x.tag)).reduce((s, x) => s + x.count, 0) + a.contacts.length + allPhones().length + a.groups.length + a.channels.length + (a.statuses ? 1 : 0);
+    return tags.filter((x) => a.tags.includes(x.tag)).reduce((s, x) => s + x.count, 0) + w.listsMeta.filter((l) => w.listSel.has(l.id)).reduce((s, l) => s + (l.counts?.total || 0), 0) + a.contacts.length + allPhones().length + a.groups.length + a.channels.length + (a.statuses ? 1 : 0);
   }
 
   function allPhones() { return [...new Set([...w.aud.phones, ...w.waSel])]; }
@@ -224,7 +228,7 @@ async function wizard(ctx) {
         <dl class="summary">
           <div><dt>${t('Name')}</dt><dd>${w.name}</dd></div>
           <div><dt>${t('From')}</dt><dd>${w.sessions.map((s) => sessionName(sessions.find((x) => x.name === s) || { name: s })).join(', ')}</dd></div>
-          <div><dt>${t('Audience')}</dt><dd>${[a.tags.length && t('Tags') + ': ' + a.tags.join(', '), a.exclude_tags.length && t('Excluding') + ': ' + a.exclude_tags.join(', '), a.contacts.length && t('{n} contacts', { n: a.contacts.length }), allPhones().length && t('{n} numbers', { n: allPhones().length }), a.groups.length && t('{n} groups', { n: a.groups.length }), a.channels.length && t('{n} channels', { n: a.channels.length }), a.statuses && t('My status')].filter(Boolean).join(' · ') || '—'}</dd></div>
+          <div><dt>${t('Audience')}</dt><dd>${[w.listSel.size && t('Lists') + ': ' + w.listsMeta.filter((l) => w.listSel.has(l.id)).map((l) => l.name).join(', '), a.tags.length && t('Tags') + ': ' + a.tags.join(', '), a.exclude_tags.length && t('Excluding') + ': ' + a.exclude_tags.join(', '), a.contacts.length && t('{n} contacts', { n: a.contacts.length }), allPhones().length && t('{n} numbers', { n: allPhones().length }), a.groups.length && t('{n} groups', { n: a.groups.length }), a.channels.length && t('{n} channels', { n: a.channels.length }), a.statuses && t('My status')].filter(Boolean).join(' · ') || '—'}</dd></div>
           ${w.versions.length > 1 ? html`<div><dt>${t('Message versions')}</dt><dd>${t('{n}, picked at random per person', { n: w.versions.length })}</dd></div>` : ''}
           ${w.sessions.length > 1 ? html`<div><dt>${t('Number choice')}</dt><dd>${w.rotation === 'random' ? t('Random number') : w.rotation === 'turns' ? t('Take turns (1 → 2 → 3 → 1)') : t('Smart (recommended)')}</dd></div>` : ''}
           <div><dt>${t('When')}</dt><dd>${whenTxt}</dd></div>
@@ -249,6 +253,7 @@ async function wizard(ctx) {
     const [first, ...rest] = w.versions;
     w.message = { ...first, variants: rest.length ? rest : undefined };
     if (f('phones')) w.aud.phones = parsePhones(f('phones').value);
+    w.aud.lists = [...w.listSel];
     w.aud.groups = [...w.chatSel].filter((x) => x.endsWith('@g.us'));
     w.aud.channels = [...w.chatSel].filter((x) => x.endsWith('@newsletter'));
     if (body.querySelector('[name=rotation]')) w.rotation = body.querySelector('[name=rotation]:checked')?.value || 'smart';

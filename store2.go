@@ -195,6 +195,16 @@ CREATE TABLE IF NOT EXISTS webhook_endpoints (
 	last_at     INTEGER NOT NULL DEFAULT 0,
 	created_at  INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS send_lists (
+	id          INTEGER PRIMARY KEY AUTOINCREMENT,
+	owner_id    INTEGER NOT NULL,
+	name        TEXT NOT NULL,
+	description TEXT NOT NULL DEFAULT '',
+	items       TEXT NOT NULL DEFAULT '[]',
+	created_at  INTEGER NOT NULL,
+	updated_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS send_lists_owner ON send_lists(owner_id);
 CREATE TABLE IF NOT EXISTS user_pacing (
 	user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
 	data    TEXT NOT NULL DEFAULT '{}'

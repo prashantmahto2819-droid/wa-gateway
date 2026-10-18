@@ -1,8 +1,9 @@
 import { api, html, raw, ic, t, getSessions, sessionOptions, sessionName, confirmBox, toast, parsePhones, debounce, modal, promptBox, fmtPhone, fmtNum, skel, empty, toLocalInput, fromLocalInput, $$ } from '/static/app/core.js';
 import { createComposer } from '/static/app/composer.js';
 import { waContactsPicker, chatsPicker, SPEEDS } from '/static/app/pickers.js';
+import { listsPicker } from '/static/app/lists.js';
 
-const TARGETS = [['phone', 'phone', 'Phone numbers'], ['contact', 'users', 'Saved contacts'], ['wa', 'contact', 'WhatsApp contacts'], ['chats', 'group', 'Groups, communities & channels']];
+const TARGETS = [['lists', 'list', 'Lists'], ['phone', 'phone', 'Phone numbers'], ['contact', 'users', 'Saved contacts'], ['wa', 'contact', 'WhatsApp contacts'], ['chats', 'group', 'Groups, communities & channels']];
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const DIRECT_MAX = 5; // more people than this, or more than one group/channel, go out as a campaign with gaps
 
@@ -15,7 +16,8 @@ export async function render(ctx) {
   const st = {
     mode: query.get('mode') === 'status' ? 'status' : 'message',
     session: query.get('session') || sessions.find((s) => s.status === 'connected')?.name || sessions[0]?.name || '',
-    target: qTo.endsWith('@g.us') || qTo.endsWith('@newsletter') ? 'chats' : 'phone',
+    target: query.get('list') ? 'lists' : qTo.endsWith('@g.us') || qTo.endsWith('@newsletter') ? 'chats' : 'phone',
+    listSel: new Set(query.get('list') ? [Number(query.get('list'))] : []), listsMeta: [],
     phones: qTo && !qTo.includes('@') ? qTo : '',
     contacts: [], // saved (gateway) contacts picked
     waSel: new Set(),
@@ -75,6 +77,9 @@ export async function render(ctx) {
     } else if (st.target === 'contact') {
       box.innerHTML = html`<div class="search" style="max-width:520px">${ic('search', 16)}<input type="search" data-csearch placeholder="${t('Search contacts by name or phone')}" aria-label="${t('Search contacts')}"></div><div data-cres class="mt-s"></div><div class="row mt-s" data-cpicked></div>`.s;
       drawPicked();
+    } else if (st.target === 'lists') {
+      box.innerHTML = '<div></div>';
+      listsPicker(box.firstChild, { selected: st.listSel, onChange: summary }).then((meta) => { st.listsMeta = meta || []; summary(); });
     } else if (!connected()) {
       box.innerHTML = notConnected();
     } else {
@@ -95,25 +100,27 @@ export async function render(ctx) {
     const wa = [...st.waSel].filter((p) => !typed.includes(p));
     const chats = [...st.chatSel];
     return { typed, contacts: st.contacts.map((c) => 'contact:' + c.id), wa,
-      groups: chats.filter((x) => x.endsWith('@g.us')), channels: chats.filter((x) => x.endsWith('@newsletter')) };
+      groups: chats.filter((x) => x.endsWith('@g.us')), channels: chats.filter((x) => x.endsWith('@newsletter')),
+      lists: [...st.listSel].map((id) => 'list:' + id) };
   }
-  function recipients() { const p = parts(); return [...p.typed, ...p.contacts, ...p.wa, ...p.groups, ...p.channels]; }
+  function recipients() { const p = parts(); return [...p.lists, ...p.typed, ...p.contacts, ...p.wa, ...p.groups, ...p.channels]; }
+  const listTotal = () => st.listsMeta.filter((l) => st.listSel.has(l.id)).reduce((n, l) => n + (l.counts?.total || 0), 0);
   function summary() {
     const p = parts();
-    const counts = { phone: p.typed.length, contact: p.contacts.length, wa: p.wa.length, chats: p.groups.length + p.channels.length };
+    const counts = { lists: p.lists.length, phone: p.typed.length, contact: p.contacts.length, wa: p.wa.length, chats: p.groups.length + p.channels.length };
     root.querySelectorAll('[data-tcount]').forEach((b) => { const n = counts[b.dataset.tcount] || 0; b.hidden = !n; b.textContent = n; });
     comp.setGroupMode(st.target === 'chats' || p.groups.length > 0);
     const el = root.querySelector('[data-rsum]'); if (!el) return;
     const to = recipients();
     if (!to.length) { el.innerHTML = ''; return; }
     const many = needsCampaign(to);
-    const bits = [p.typed.length && t('{n} numbers', { n: p.typed.length }), p.contacts.length && t('{n} contacts', { n: p.contacts.length }), p.wa.length && t('{n} WhatsApp contacts', { n: p.wa.length }), p.groups.length && t('{n} groups', { n: p.groups.length }), p.channels.length && t('{n} channels', { n: p.channels.length })].filter(Boolean).join(' · ');
+    const bits = [p.lists.length && t('{n} lists (~{c} recipients)', { n: p.lists.length, c: fmtNum(listTotal()) }), p.typed.length && t('{n} numbers', { n: p.typed.length }), p.contacts.length && t('{n} contacts', { n: p.contacts.length }), p.wa.length && t('{n} WhatsApp contacts', { n: p.wa.length }), p.groups.length && t('{n} groups', { n: p.groups.length }), p.channels.length && t('{n} channels', { n: p.channels.length })].filter(Boolean).join(' · ');
     el.innerHTML = html`<div class="note ${many ? 'info' : 'ok'}">${ic(many ? 'clock' : 'check', 16)}<span class="grow"><b>${t('{n} selected', { n: fmtNum(to.length) })}</b> — ${bits}<br>${many
       ? t('They will get it one by one with safe gaps (as a campaign you can follow and pause).')
-      : t('Sent right away.')}</span><button type="button" class="btn sm ghost" data-a="clear-all">${t('Clear all')}</button></div>`.s;
+      : t('Sent right away.')}</span>${to.length - p.lists.length > 1 ? html`<button type="button" class="btn sm" data-a="save-list">${ic('list', 14)}${t('Save as list')}</button>` : ''}<button type="button" class="btn sm ghost" data-a="clear-all">${t('Clear all')}</button></div>`.s;
   }
   const isChat = (x) => x.endsWith('@g.us') || x.endsWith('@newsletter');
-  const needsCampaign = (to) => to.length > DIRECT_MAX || to.filter(isChat).length > 1;
+  const needsCampaign = (to) => to.length > DIRECT_MAX || to.filter(isChat).length > 1 || to.some((x) => x.startsWith('list:'));
 
   // ---------------------------------------------------------------- Status audience
   async function drawStatusAudience(w) {
@@ -217,7 +224,16 @@ export async function render(ctx) {
     if (rmc) { st.contacts = st.contacts.filter((x) => String(x.id) !== rmc.dataset.rmc); drawPicked(); summary(); return; }
     const b = e.target.closest('[data-a]'); if (!b) return;
     const a = b.dataset.a;
-    if (a === 'clear-all') { st.phones = ''; st.contacts = []; st.waSel.clear(); st.chatSel.clear(); drawTarget(); return; }
+    if (a === 'clear-all') { st.phones = ''; st.contacts = []; st.waSel.clear(); st.chatSel.clear(); st.listSel.clear(); drawTarget(); return; }
+    if (a === 'save-list') {
+      const name = await promptBox(t('Save as list'), { label: t('List name'), placeholder: t('Korba customers') });
+      if (!name) return;
+      const p = parts();
+      const items = [...p.typed, ...p.contacts, ...p.wa, ...p.groups, ...p.channels].map((to) => ({ to, name: (st.contacts.find((c) => 'contact:' + c.id === to) || {}).name || '' }));
+      const j = await api('POST', '/api/lists', { name, items });
+      if (j.ok) toast(t('List "{n}" saved with {c} recipients', { n: name, c: fmtNum(j.list.counts.total) }));
+      return;
+    }
     if (a === 'load-tpl') loadTemplate(comp);
     if (a === 'save-tpl') {
       const err = comp.validate(); if (err) return toast(err, 'warn');
@@ -289,7 +305,8 @@ export async function render(ctx) {
     m.foot.querySelector('[data-ok]').addEventListener('click', async () => {
       if (!f.reportValidity()) return;
       const audience = { contacts: [], tags: [], exclude_tags: [], phones: [], groups: [], channels: [], statuses: false };
-      to.forEach((x) => { if (x === 'status') audience.statuses = true; else if (x.startsWith('contact:')) audience.contacts.push(Number(x.slice(8))); else if (x.endsWith('@g.us')) audience.groups.push(x); else if (x.endsWith('@newsletter')) audience.channels.push(x); else audience.phones.push(x); });
+      audience.lists = [];
+      to.forEach((x) => { if (x.startsWith('list:')) audience.lists.push(Number(x.slice(5))); else if (x === 'status') audience.statuses = true; else if (x.startsWith('contact:')) audience.contacts.push(Number(x.slice(8))); else if (x.endsWith('@g.us')) audience.groups.push(x); else if (x.endsWith('@newsletter')) audience.channels.push(x); else audience.phones.push(x); });
       const body = { name: f.name.value, sessions: [st.session], message: status ? statusMessage() : comp.get(), audience, speed: f.speed?.value || 'safe' };
       if (!now) {
         const at = fromLocalInput(f.at.value);

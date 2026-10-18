@@ -198,7 +198,7 @@ export function promptBox(title, { label = '', value = '', placeholder = '', okT
     const m = modal({
       title, size: 'sm',
       body: html`<form data-f><label class="field"><span>${label}</span>
-        <input name="v" type="${type}" value="${value}" placeholder="${placeholder}" autofocus required></label>
+        ${type === 'textarea' ? html`<textarea name="v" rows="6" placeholder="${placeholder}" autofocus required>${value}</textarea>` : html`<input name="v" type="${type}" value="${value}" placeholder="${placeholder}" autofocus required>`}</label>
         ${hint ? html`<p class="hint">${hint}</p>` : ''}</form>`,
       footer: html`<button class="btn ghost" data-close>${t('Cancel')}</button><button class="btn primary" data-ok>${okText || t('Save')}</button>`,
     });

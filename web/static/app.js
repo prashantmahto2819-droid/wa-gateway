@@ -11,6 +11,7 @@ const ROUTES = [
   { re: /^\/app\/campaigns\/(\d+)\/?$/, mod: 'campaigns', nav: 'campaigns', view: 'detail', keys: ['id'] },
   { re: /^\/app\/scheduled\/?$/, mod: 'scheduled', nav: 'scheduled' },
   { re: /^\/app\/contacts\/?$/, mod: 'contacts', nav: 'contacts' },
+  { re: /^\/app\/lists\/?$/, mod: 'lists', nav: 'lists' },
   { re: /^\/app\/groups\/?$/, mod: 'groups', nav: 'groups' },
   { re: /^\/app\/media\/?$/, mod: 'media', nav: 'media' },
   { re: /^\/app\/templates\/?$/, mod: 'templates', nav: 'templates' },
@@ -32,6 +33,7 @@ const NAV = [
   ] },
   { group: 'Audience', items: [
     ['contacts', '/app/contacts', 'users', 'Contacts'],
+    ['lists', '/app/lists', 'list', 'Lists'],
     ['groups', '/app/groups', 'group', 'Groups & channels'],
   ] },
   { group: 'Content', items: [

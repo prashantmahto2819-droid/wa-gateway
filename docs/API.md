@@ -164,6 +164,16 @@ Users see only their own sessions. `name` is generated for users (`u<id>-<slug>`
 
 CSV columns: `phone,name,email,tags,notes` + any extra column becomes a custom field (`{{city}}` in messages).
 
+## Saved send lists
+
+| Method | Path | Notes |
+|---|---|---|
+| GET/POST | `/api/lists` | POST `{name, description?, items:[{to, name?}]}` — `to` is a phone, `contact:<id>`, `…@g.us` (group / community announcements) or `…@newsletter`; duplicates and invalid entries are dropped; up to 50,000 items |
+| GET/PATCH/DELETE | `/api/lists/{id}` | PATCH `{name?, items?}` replaces, or `{add:[…], remove:["to",…]}` changes in place |
+| POST | `/api/sessions/{name}/members-to-list` | `{groups:[jid], list_id? \| name?}` adds the members' numbers (hidden LID-only members are counted in `hidden`) |
+
+Campaign `audience.lists:[id]` sends to everyone in the lists; lists are read when each run starts, so repeating campaigns pick up changes. A phone item's `name` fills `{{name}}`.
+
 ## Media library
 
 | Method | Path | Notes |

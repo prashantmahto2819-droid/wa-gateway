@@ -123,6 +123,12 @@ func (a *API) routes() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{name}/channels/resolve", auth(a.resolveChannel))
 
 	// CRM, media, templates, campaigns, automation
+	mux.HandleFunc("GET /api/lists", auth(a.listLists))
+	mux.HandleFunc("POST /api/lists", auth(a.saveList))
+	mux.HandleFunc("GET /api/lists/{id}", auth(a.getList))
+	mux.HandleFunc("PATCH /api/lists/{id}", auth(a.saveList))
+	mux.HandleFunc("DELETE /api/lists/{id}", auth(a.deleteList))
+	mux.HandleFunc("POST /api/sessions/{name}/members-to-list", auth(a.groupMembersToList))
 	mux.HandleFunc("GET /api/contacts", auth(a.listContacts))
 	mux.HandleFunc("POST /api/contacts", auth(a.saveContact))
 	mux.HandleFunc("GET /api/contacts/tags", auth(a.contactTags))

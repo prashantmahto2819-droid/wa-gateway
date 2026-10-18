@@ -118,6 +118,7 @@ type Audience struct {
 	Groups      []string `json:"groups"`
 	Channels    []string `json:"channels"`
 	Statuses    bool     `json:"statuses"`
+	Lists       []int64  `json:"lists"` // saved send lists (phones, contacts, groups, channels)
 }
 
 type Schedule struct {
@@ -313,7 +314,12 @@ func (a *API) campaignFromRequest(r *http.Request, p *Principal, c *Campaign) er
 		return errors.New("repeat must be none, daily, weekly or monthly")
 	}
 	a2 := c.Audience
-	if len(a2.Contacts)+len(a2.Tags)+len(a2.Phones)+len(a2.Groups)+len(a2.Channels) == 0 && !a2.Statuses {
+	for _, id := range a2.Lists {
+		if _, err := a.m.loadList(ctx, p.UserID, id); err != nil {
+			return fmt.Errorf("audience.lists must be your own lists (list %d was not found)", id)
+		}
+	}
+	if len(a2.Contacts)+len(a2.Tags)+len(a2.Phones)+len(a2.Groups)+len(a2.Channels)+len(a2.Lists) == 0 && !a2.Statuses {
 		return errors.New("choose who should receive this campaign")
 	}
 	if len(a2.Phones) > 10000 {
@@ -841,6 +847,7 @@ func (m *Manager) expandAudience(ctx context.Context, c *Campaign) []SendRequest
 		exclude[strings.ToLower(strings.TrimSpace(t))] = true
 	}
 	seen := map[int64]bool{}
+	listNames := map[string]string{}
 	addContact := func(ct *Contact) {
 		if seen[ct.ID] {
 			return
@@ -873,6 +880,31 @@ func (m *Manager) expandAudience(ctx context.Context, c *Campaign) []SendRequest
 	for _, id := range aud.Contacts {
 		q(`c.id=?`, id)
 	}
+	// Saved lists are read when the campaign starts, so later changes to a
+	// list are used by repeating campaigns too.
+	for _, lid := range aud.Lists {
+		l, err := m.loadList(ctx, c.OwnerID, lid)
+		if err != nil {
+			continue
+		}
+		for _, it := range l.Items {
+			switch itemKind(it.To) {
+			case "contacts":
+				if n, err := strconv.ParseInt(strings.TrimPrefix(it.To, "contact:"), 10, 64); err == nil {
+					q(`c.id=?`, n)
+				}
+			case "groups":
+				aud.Groups = append(aud.Groups, it.To)
+			case "channels":
+				aud.Channels = append(aud.Channels, it.To)
+			default:
+				aud.Phones = append(aud.Phones, it.To)
+				if it.Name != "" {
+					listNames[it.To] = it.Name
+				}
+			}
+		}
+	}
 	for _, ph := range aud.Phones {
 		if p := normPhone(ph, m.cfg.DefaultCountryCode); p != "" {
 			var ct *Contact
@@ -880,7 +912,11 @@ func (m *Manager) expandAudience(ctx context.Context, c *Campaign) []SendRequest
 			if ct != nil {
 				addContact(ct)
 			} else {
-				add(p, map[string]string{"phone": p, "name": "there"})
+				name := "there"
+				if n := listNames[p]; n != "" {
+					name = n
+				}
+				add(p, map[string]string{"phone": p, "name": name, "first_name": strings.Fields(name)[0]})
 			}
 		}
 	}
