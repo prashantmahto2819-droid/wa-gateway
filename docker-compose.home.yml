@@ -1,0 +1,39 @@
+# Home server / no public IP: the gateway is reached through a free
+# Cloudflare Tunnel, so no router ports are opened and no HTTPS setup is
+# needed. Used when .env has COMPOSE_FILE=docker-compose.home.yml
+# (install-home.sh sets it), so ./update.sh works unchanged.
+services:
+  gateway:
+    build:
+      context: .
+      args:
+        VERSION: ${VERSION:-local}
+    image: wa-gateway:local
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATA_DIR: /data
+      PORT: "8080"
+      GOMEMLIMIT: 300MiB
+    volumes:
+      - gw_data:/data
+    ports:
+      - "127.0.0.1:${LOCAL_PORT:-8090}:8080" # only this machine (for a quick local check)
+    mem_limit: 512m
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  tunnel: # Cloudflare Tunnel: https://<your hostname> → gateway:8080
+    image: cloudflare/cloudflared:2026.9.3
+    restart: unless-stopped
+    depends_on: [gateway]
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN}
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+volumes:
+  gw_data:

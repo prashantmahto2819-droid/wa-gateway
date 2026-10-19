@@ -45,6 +45,18 @@ cd wa-gateway
 
 ---
 
+### घर के server पर (public IP नहीं, router में port नहीं खोलना)
+
+Ubuntu (जैसे VMware VM) पर, Cloudflare Tunnel से — मुफ़्त, कोई port खुला नहीं:
+
+1. Cloudflare → Zero Trust → Networks → Tunnels → **Create tunnel** (Cloudflared) → token copy करें।
+2. उसी tunnel में **Public hostname**: `relay2.vividbrandify.com` → Service `HTTP` → `gateway:8080`।
+3. ```
+   git clone https://github.com/prashantmahto2819-droid/wa-gateway.git && cd wa-gateway
+   sudo ./install-home.sh relay2.vividbrandify.com <TUNNEL_TOKEN>
+   ```
+`./update.sh` और `./backup.sh` वैसे ही चलते हैं। एक ही WhatsApp नंबर को दो gateway में link न करें।
+
 ## 2. क्या-क्या है
 
 | हिस्सा | सुविधाएँ |
