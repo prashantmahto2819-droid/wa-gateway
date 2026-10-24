@@ -154,13 +154,16 @@ Users see only their own sessions. `name` is generated for users (`u<id>-<slug>`
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/api/contacts?q=&tag=&opted_out=&page=1&limit=50` | `{ok, contacts:[Contact], total, page, limit}` |
+| GET | `/api/contacts?q=&tag=&opted_out=&source=&filter=&page=1&limit=50` | `{ok, contacts:[Contact], total, page, limit}`. `filter`: `new` (7 days), `active` (wrote in 30 days), `inactive` (silent 90+ days), `noname`, `duplicates` (same name on several numbers), `untagged`, `noemail` |
 | POST | `/api/contacts` | Contact fields (phone required) → upsert by phone |
 | PATCH/DELETE | `/api/contacts/{id}` | |
 | POST | `/api/contacts/bulk` | `{ids[], action:"add_tag|remove_tag|delete|opt_out|opt_in", tag?}` |
 | POST | `/api/contacts/import` | multipart `file` (CSV) + optional `tag`, or JSON `{rows:[{phone,name,email,tags,…}], tag}` → `{ok, created, updated, invalid}` |
 | GET | `/api/contacts/export.csv?tag=` | CSV download |
 | GET | `/api/contacts/tags` | `{ok, tags:[{tag,count}]}` |
+| GET | `/api/contacts/stats` | counts for every smart filter and per source |
+| POST | `/api/contacts/merge` | `{keep:id, remove:[ids]}` — tags, notes, custom fields, follow-ups, renewals and tasks move to `keep`; other numbers kept as `other_phone` |
+| GET | `/api/contacts/export.vcf?tag=&ids=` | vCard 3.0 (UTF-8) for phones / Google Contacts |
 
 CSV columns: `phone,name,email,tags,notes` + any extra column becomes a custom field (`{{city}}` in messages).
 
@@ -200,6 +203,84 @@ Campaign `audience.lists:[id]` sends to everyone in the lists; lists are read wh
 Rotation (several `sessions`): `smart` keeps each person on one number (the one they chatted with, else the least busy); `random` picks a random number per person; `turns` sends one message at a time across the numbers in order (1 → 2 → 3 → 1 …) with the campaign gap between consecutive messages — a number that misses its turn for 45 s (offline, at its limit, quiet hours) is skipped for 10 minutes. `gap_min`/`gap_max` (seconds) set the campaign's own gap and replace `speed`; they can't be below the admin floor. Groups, channels and Status are always posted by the first number.
 
 Speed: `safe` = delays ×2, `normal` = configured delays, `slow` = ×4. Repeat: `daily`, `weekly` (`days`: 0=Sun…6=Sat), `monthly` (same date), stops after `until`.
+
+## Business Kit
+
+A kit is a ready-made setup for one kind of business (30 kits: insurance, clinic, school, salon, news portal …). Applying one writes auto-replies (welcome menu + one answer per question), follow-up sequences, renewal types, checklist tasks and public forms into the workspace; everything can be edited afterwards. Re-applying refreshes what the kit made and keeps hand-made items.
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/kits` · `/api/kits/{id}` | catalogue (groups, counts) and one full kit |
+| GET/PATCH | `/api/business` | profile `{kit, subs[], name, phone, city, code, fields[], forms[], stages}` + `counts`; `form_base` is the public form URL prefix |
+| POST | `/api/business/apply` | `{kit, subs[], name?, phone?, city?, session?}` → `{created:{autoreplies, sequences, renewal_types, tasks}}` |
+| GET | `/api/business/entries?form=` | filled forms |
+| GET | `/f/{code}/{key}` | public enquiry form (no auth; POST creates a contact tagged `form:<key>`, a task, starts `form` / `lead_new` sequences, fires `form.entry`) |
+
+### Follow-up sequences
+
+| Method | Path | Notes |
+|---|---|---|
+| GET/POST | `/api/sequences` | `{name, trigger:"lead_new|form|tag|stage|manual", trigger_value?, business_days, stop_on_reply, session?, active, steps:[{day, action:"auto_whatsapp|whatsapp|call|task", title, message?}]}` |
+| PATCH/DELETE | `/api/sequences/{id}` | |
+| POST | `/api/sequences/{id}/enroll` | `{contacts:[ids], phones:[…], list_id?}` → `{started, people}` (one active run per person per sequence) |
+| GET | `/api/sequences/runs?status=active|done|stopped|replied|all&sequence=` | |
+| DELETE | `/api/sequences/runs/{id}` | stop a run |
+
+`auto_whatsapp` steps go through the normal outbox (pacing, turns and daily limits apply); the other kinds become tasks. Day-0 steps run at once, later steps at 10:30 local; `business_days` skips Sundays. `{{name}} {{phone}} {{business}} {{business_phone}} {{city}}` plus contact fields.
+
+### Renewals
+
+| Method | Path | Notes |
+|---|---|---|
+| GET/POST | `/api/renewal-types` · PATCH/DELETE `/api/renewal-types/{id}` | `{label, icon, frequency:"yearly|half_yearly|quarterly|monthly|weekly|once", remind_before:[30,7,1], remind_after:[7], staff_task, message, fields[], session?}` |
+| GET | `/api/renewals?status=open|done|lost|all&type=&q=&due=overdue|week|month` | |
+| POST/PATCH/DELETE | `/api/renewals` · `/api/renewals/{id}` | `{type_id, contact_id? | phone, name?, title, amount?, due (unix), fields{}, status, note}`; marking a recurring one `done` returns `next` |
+
+Reminders go out from 9 am local on the configured days with `{{name}} {{title}} {{amount}} {{due}} {{business}}`; `staff_task` also creates a task on the first reminder day.
+
+### Tasks
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/tasks?view=today|upcoming|done|all` | agents see unassigned tasks and their own |
+| POST/PATCH/DELETE | `/api/tasks` · `/api/tasks/{id}` | `{title, due, repeat:"|daily|weekly|monthly", at_time, done, assignee_id, phone, note}`; a repeating task marked done rolls to its next occurrence |
+
+## Chatbot flows
+
+| Method | Path | Notes |
+|---|---|---|
+| GET/POST | `/api/flows` · PATCH/DELETE `/api/flows/{id}` | `{name, trigger:"keyword|contains|welcome|any|manual", keywords[], session?, priority, active, test_mode, test_phones[], graph:{nodes:[{id,type,data}], edges:[{source,port,target}]}}`; saving returns `problems[]` and refuses `active:true` while problems remain |
+| POST | `/api/flows/{id}/test` | `{text?, button_id?, reset?, graph?}` sandbox: nothing is sent, API steps and tags are skipped → `{replies:[SendRequest], events, waiting_at, vars, done}` |
+| GET | `/api/flows/{id}/logs?chat=` | execution log + `in_progress` |
+
+Node types: `start`; `message` (`data.message.type` = `text` | `buttons` ≤3 | `list` ≤10, waits for a tap when it has choices); `question` (`text, var, kind:"text|number|phone|email|date", retry`); `condition` (`var, op:"exists|equals|contains|gt|lt|tag", value` → ports `yes`/`no`); `tag` (`add[], remove[]`); `api` (`url` https, `method`, `body` template, `headers[]`, `save:{var:"json.path"}` → ports `ok`/`fail`); `assign` (`minutes, note` — pauses the bot in that chat and fires `flow.handover`); `end`. Ports: `next`, a button/row id, `else`, `yes`, `no`, `ok`, `fail`. A chat is in at most one flow; flows run before auto-replies; collected variables are saved on the contact when the flow ends.
+
+## Link Publisher & websites
+
+| Method | Path | Notes |
+|---|---|---|
+| GET/POST | `/api/websites` · PATCH/DELETE `/api/websites/{id}` | `{name, url, text (default template), active, routes:[{category, session, targets:[{to,name}], text, auto}]}`; POST (and `PATCH {rotate_secret:true}`) returns `key` and `secret` once |
+| POST | `/api/inbound` | **signed, no login**: headers `X-Relay-Key`, `X-Relay-Timestamp` (unix s, ±5 min), `X-Relay-Signature: sha256=HMAC_SHA256(secret, timestamp + "." + rawBody)`; body `{id, event, title, summary, text?, url, image?, category?, audience?, auto?}` → `{ok, id, status:"pending|queued|duplicate"}` |
+| GET | `/api/inbound/ping` | same headers → `{ok, website, routes}` |
+| GET | `/api/posts?status=pending|queued|rejected|all&q=` | `pending` count included |
+| POST | `/api/posts` | bulk `{urls:[…], text?, session?, targets?, category?, fetch:true, approve:false}` (≤100 links; metadata fetched when `fetch`) |
+| PATCH | `/api/posts/{id}` | `{title, summary, text, image, url, session, category, targets, refetch}` |
+| POST | `/api/posts/{id}/approve` · `/reject` | approve `{targets?, session?, text?}` queues through the outbox (label `post<id>`); stats per post come from the outbox |
+| DELETE | `/api/posts/{id}` | |
+
+Targets: a phone, `contact:<id>`, `list:<id>`, `…@g.us`, `…@newsletter` or `status`. Templates: `{{title}} {{summary}} {{url}} {{image}} {{site}} {{category}}`. A route's `auto` only skips approval when the website also sends `auto:true`. Events: `post.pending`, `post.queued`, `form.entry`, `flow.handover`.
+
+## Proxies and quotas
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/proxies` | pool proxies this workspace may attach (`masked` only) + `own_allowed` |
+| PATCH | `/api/sessions/{name}` | `{proxy_id}` attaches a pool proxy (0 = none); `{proxy:"socks5://…"}` an own URL when allowed; `settings.daily_limit` = the number's own cap |
+| GET/POST | `/api/admin/proxies` · PATCH/DELETE `/api/admin/proxies/{id}` · POST `/{id}/test` | `{label, url, kind:"shared|dedicated", assigned_to, country, note, active}`; `POST /api/admin/proxies/settings {own_allowed}` |
+
+Quota engine (`PUT /api/admin/pacing`): `warmup_start` (day-1 allowance), `warmup_growth_pct` (per day), `daily_limit` (ceiling), `new_contact_limit`; a plan's `daily_limit` and the number's own cap can only lower it. Every session carries `quota:{day, warmup_limit, effective_limit, tomorrow, full_in_days, …}`.
+
+Plan `limits` (entitlements, 0 = unlimited): `staff`, `websites`, `flows`, `sequences`, `lists`.
 
 ## Admin (super-admin only)
 
@@ -241,5 +322,5 @@ Settings: `{site_name, tagline, company_name, support_email, support_phone, what
 
 Payload `{event, session, owner_id, timestamp, data}`; headers `X-Event`, `X-Timestamp`, `X-Signature: sha256=HMAC(secret, timestamp + "." + body)`.
 `message` data also carries `menu_choice:{id,text}` when the text answers a menu we sent. `poll.vote` data: `{poll_id, chat, voter, voter_phone, options:["A"]}`. `call` data: `{from, from_phone, video, rejected}`.
-Events: `call`, `message`, `message.receipt`, `message.deleted`, `poll.vote`, `queue.status`, `campaign.status`, `session.status`, `session.paired`, `session.timelock`, `session.health`, `contact.optout`, `contact.optin`, `group.update`, `test`.
+Events: `call`, `message`, `message.receipt`, `message.deleted`, `poll.vote`, `queue.status`, `campaign.status`, `session.status`, `session.paired`, `session.timelock`, `session.health`, `contact.optout`, `contact.optin`, `group.update`, `form.entry`, `flow.handover`, `post.pending`, `post.queued`, `test`.
 User webhooks get only events of their own sessions; the global `.env` WEBHOOK_URL gets everything.
