@@ -129,6 +129,30 @@ func (a *API) listContacts(w http.ResponseWriter, r *http.Request) {
 	case "0", "false":
 		where = append(where, "NOT EXISTS(SELECT 1 FROM optouts o WHERE o.owner_id=c.owner_id AND o.phone=c.phone)")
 	}
+	if src := strings.TrimSpace(q.Get("source")); src != "" {
+		where = append(where, "c.source=?")
+		args = append(args, src)
+	}
+	// Contact intelligence filters
+	switch q.Get("filter") {
+	case "noname":
+		where = append(where, "TRIM(c.name)=''")
+	case "duplicates": // same name on more than one number
+		where = append(where, "TRIM(c.name)<>'' AND LOWER(TRIM(c.name)) IN (SELECT LOWER(TRIM(d.name)) FROM contacts d WHERE d.owner_id=c.owner_id AND TRIM(d.name)<>'' GROUP BY LOWER(TRIM(d.name)) HAVING COUNT(*)>1)")
+	case "inactive": // never heard from in 90 days
+		where = append(where, "c.last_seen < ?")
+		args = append(args, time.Now().AddDate(0, 0, -90).Unix())
+	case "active": // wrote to us in the last 30 days
+		where = append(where, "c.last_seen >= ?")
+		args = append(args, time.Now().AddDate(0, 0, -30).Unix())
+	case "new": // added in the last 7 days
+		where = append(where, "c.created_at >= ?")
+		args = append(args, time.Now().AddDate(0, 0, -7).Unix())
+	case "noemail":
+		where = append(where, "TRIM(c.email)=''")
+	case "untagged":
+		where = append(where, "(c.tags='' OR c.tags=',')")
+	}
 	w2 := strings.Join(where, " AND ")
 	var total int
 	_ = a.m.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM contacts c WHERE `+w2, args...).Scan(&total)
@@ -146,6 +170,177 @@ func (a *API) listContacts(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "contacts": out, "total": total, "page": page, "limit": limit})
+}
+
+// GET /api/contacts/stats — counts for the filter chips.
+func (a *API) contactStats(w http.ResponseWriter, r *http.Request) {
+	p := principalOf(r)
+	ctx := r.Context()
+	now := time.Now()
+	out := map[string]any{"ok": true}
+	for k, q := range map[string]string{
+		"total":      `SELECT COUNT(*) FROM contacts c WHERE c.owner_id=?`,
+		"noname":     `SELECT COUNT(*) FROM contacts c WHERE c.owner_id=? AND TRIM(c.name)=''`,
+		"duplicates": `SELECT COUNT(*) FROM contacts c WHERE c.owner_id=? AND TRIM(c.name)<>'' AND LOWER(TRIM(c.name)) IN (SELECT LOWER(TRIM(d.name)) FROM contacts d WHERE d.owner_id=c.owner_id AND TRIM(d.name)<>'' GROUP BY LOWER(TRIM(d.name)) HAVING COUNT(*)>1)`,
+		"untagged":   `SELECT COUNT(*) FROM contacts c WHERE c.owner_id=? AND (c.tags='' OR c.tags=',')`,
+		"opted_out":  `SELECT COUNT(*) FROM optouts o WHERE o.owner_id=?`,
+	} {
+		var n int
+		_ = a.m.db.QueryRowContext(ctx, q, p.UserID).Scan(&n)
+		out[k] = n
+	}
+	var n int
+	_ = a.m.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM contacts WHERE owner_id=? AND last_seen>=?`, p.UserID, now.AddDate(0, 0, -30).Unix()).Scan(&n)
+	out["active"] = n
+	_ = a.m.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM contacts WHERE owner_id=? AND last_seen<?`, p.UserID, now.AddDate(0, 0, -90).Unix()).Scan(&n)
+	out["inactive"] = n
+	_ = a.m.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM contacts WHERE owner_id=? AND created_at>=?`, p.UserID, now.AddDate(0, 0, -7).Unix()).Scan(&n)
+	out["new"] = n
+	rows, err := a.m.db.QueryContext(ctx, `SELECT source, COUNT(*) FROM contacts WHERE owner_id=? GROUP BY source ORDER BY 2 DESC`, p.UserID)
+	sources := map[string]int{}
+	if err == nil {
+		for rows.Next() {
+			var src string
+			var c int
+			if rows.Scan(&src, &c) == nil {
+				sources[src] = c
+			}
+		}
+		rows.Close()
+	}
+	out["sources"] = sources
+	writeJSON(w, http.StatusOK, out)
+}
+
+// POST /api/contacts/merge {keep: id, remove: [ids]} — one contact absorbs the others.
+func (a *API) mergeContacts(w http.ResponseWriter, r *http.Request) {
+	p := principalOf(r)
+	ctx := r.Context()
+	var b struct {
+		Keep   int64   `json:"keep"`
+		Remove []int64 `json:"remove"`
+	}
+	if err := decode(r, &b); err != nil || b.Keep == 0 || len(b.Remove) == 0 || len(b.Remove) > 50 {
+		writeErr(w, http.StatusBadRequest, "bad_request", errors.New("keep and 1-50 remove ids are required"))
+		return
+	}
+	keep, err := a.getContactByID(ctx, p.UserID, strconv.FormatInt(b.Keep, 10))
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "not_found", errors.New("contact not found"))
+		return
+	}
+	merged := 0
+	for _, id := range b.Remove {
+		if id == b.Keep {
+			continue
+		}
+		other, err := a.getContactByID(ctx, p.UserID, strconv.FormatInt(id, 10))
+		if err != nil {
+			continue
+		}
+		if keep.Name == "" {
+			keep.Name = other.Name
+		}
+		if keep.Email == "" {
+			keep.Email = other.Email
+		}
+		if other.Notes != "" && !strings.Contains(keep.Notes, other.Notes) {
+			keep.Notes = strings.TrimSpace(keep.Notes + "\n" + other.Notes)
+		}
+		keep.Tags = append(keep.Tags, other.Tags...)
+		for k, v := range other.Custom {
+			if keep.Custom[k] == "" {
+				keep.Custom[k] = v
+			}
+		}
+		if other.Phone != keep.Phone {
+			keep.Custom["other_phone"] = other.Phone
+		}
+		keep.LastSeen = max(keep.LastSeen, other.LastSeen)
+		for _, q := range []string{`UPDATE sequence_runs SET contact_id=? WHERE contact_id=?`, `UPDATE renewals SET contact_id=? WHERE contact_id=?`, `UPDATE tasks SET contact_id=? WHERE contact_id=?`, `UPDATE form_entries SET contact_id=? WHERE contact_id=?`} {
+			_, _ = a.m.db.ExecContext(ctx, q, keep.ID, other.ID)
+		}
+		_, _ = a.m.db.ExecContext(ctx, `UPDATE send_lists SET items=REPLACE(items, ?, ?) WHERE owner_id=?`, `"contact:`+strconv.FormatInt(other.ID, 10)+`"`, `"contact:`+strconv.FormatInt(keep.ID, 10)+`"`, p.UserID)
+		_, _ = a.m.db.ExecContext(ctx, `DELETE FROM contacts WHERE id=? AND owner_id=?`, other.ID, p.UserID)
+		merged++
+	}
+	_, err = a.m.db.ExecContext(ctx, `UPDATE contacts SET name=?, email=?, tags=?, notes=?, custom=?, last_seen=?, updated_at=? WHERE id=?`,
+		truncate(keep.Name, 120), truncate(keep.Email, 200), packTags(keep.Tags), truncate(keep.Notes, 2000), jsonText(keep.Custom), keep.LastSeen, time.Now().Unix(), keep.ID)
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	c, _ := a.getContactByID(ctx, p.UserID, strconv.FormatInt(keep.ID, 10))
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "merged": merged, "contact": c})
+}
+
+// GET /api/contacts/export.vcf?tag=&ids= — vCard 3.0 (UTF-8) for phones / Google Contacts.
+func (a *API) exportVCF(w http.ResponseWriter, r *http.Request) {
+	p := principalOf(r)
+	q := `SELECT ` + contactCols + ` FROM contacts c WHERE c.owner_id=?`
+	args := []any{p.UserID}
+	if t := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("tag"))); t != "" {
+		q += ` AND c.tags LIKE ?`
+		args = append(args, "%,"+t+",%")
+	}
+	if ids := strings.TrimSpace(r.URL.Query().Get("ids")); ids != "" {
+		var ph []string
+		for _, id := range strings.Split(ids, ",") {
+			if n, err := strconv.ParseInt(strings.TrimSpace(id), 10, 64); err == nil {
+				ph = append(ph, "?")
+				args = append(args, n)
+			}
+		}
+		if len(ph) > 0 {
+			q += ` AND c.id IN (` + strings.Join(ph, ",") + `)`
+		}
+	}
+	rows, err := a.m.db.QueryContext(r.Context(), q+` ORDER BY c.name COLLATE NOCASE, c.id`, args...)
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	defer rows.Close()
+	w.Header().Set("Content-Type", "text/vcard; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="contacts.vcf"`)
+	esc := func(s string) string {
+		return strings.NewReplacer("\\", "\\\\", ";", "\\;", ",", "\\,", "\n", "\\n").Replace(s)
+	}
+	var sb strings.Builder
+	n := 0
+	for rows.Next() {
+		c, err := scanContact(rows)
+		if err != nil {
+			continue
+		}
+		name := c.Name
+		if name == "" {
+			name = "+" + c.Phone
+		}
+		sb.WriteString("BEGIN:VCARD\r\nVERSION:3.0\r\n")
+		sb.WriteString("FN:" + esc(name) + "\r\n")
+		sb.WriteString("N:" + esc(name) + ";;;;\r\n")
+		sb.WriteString("TEL;TYPE=CELL:+" + c.Phone + "\r\n")
+		if c.Email != "" {
+			sb.WriteString("EMAIL:" + esc(c.Email) + "\r\n")
+		}
+		if len(c.Tags) > 0 {
+			sb.WriteString("CATEGORIES:" + esc(strings.Join(c.Tags, ",")) + "\r\n")
+		}
+		if c.Notes != "" {
+			sb.WriteString("NOTE:" + esc(c.Notes) + "\r\n")
+		}
+		sb.WriteString("END:VCARD\r\n")
+		n++
+		if sb.Len() > 64<<10 {
+			_, _ = w.Write([]byte(sb.String()))
+			sb.Reset()
+		}
+	}
+	_, _ = w.Write([]byte(sb.String()))
+	if n == 0 {
+		_, _ = w.Write([]byte(""))
+	}
 }
 
 func (a *API) getContactByID(ctx context.Context, owner int64, id string) (*Contact, error) {

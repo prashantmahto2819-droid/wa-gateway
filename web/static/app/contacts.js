@@ -4,18 +4,21 @@ const LIMIT = 50;
 
 export async function render(ctx) {
   const { root } = ctx;
-  const st = { q: '', tag: ctx.query.get('tag') || '', opted: '', page: 1, total: 0, list: [], sel: new Set(), tags: [] };
+  const st = { q: '', tag: ctx.query.get('tag') || '', opted: '', filter: '', source: '', page: 1, total: 0, list: [], sel: new Set(), tags: [], stats: null };
   root.innerHTML = html`<div class="page">
     <div class="page-head"><div><h1>${t('Contacts')}</h1><p>${t('Everyone you can message. Tags decide who gets which campaign.')}</p></div>
       <div class="page-actions">
         <button class="btn" data-a="import">${ic('upload', 16)}${t('Import CSV')}</button>
         <a class="btn" data-export href="/api/contacts/export.csv" download>${ic('download', 16)}${t('Export CSV')}</a>
+        <a class="btn" data-export-vcf href="/api/contacts/export.vcf" download title="${t('vCard for phones / Google Contacts')}">${ic('phone', 16)}${t('Export VCF')}</a>
         <button class="btn primary" data-a="add">${ic('plus', 16)}${t('Add contact')}</button></div></div>
     <div class="split-r">
       <aside class="panel" aria-label="${t('Tags')}"><div class="panel-head"><h3>${t('Tags')}</h3></div><nav data-tags style="padding:6px">${skel(4)}</nav></aside>
       <div>
         <div class="row mb"><div class="search grow">${ic('search', 16)}<input type="search" data-q placeholder="${t('Search name, phone or email')}" aria-label="${t('Search contacts')}"></div>
-          <select data-opted style="width:auto" aria-label="${t('Opt-out filter')}"><option value="">${t('Everyone')}</option><option value="0">${t('Subscribed')}</option><option value="1">${t('Opted out')}</option></select></div>
+          <select data-opted style="width:auto" aria-label="${t('Opt-out filter')}"><option value="">${t('Everyone')}</option><option value="0">${t('Subscribed')}</option><option value="1">${t('Opted out')}</option></select>
+          <select data-source style="width:auto" aria-label="${t('Source filter')}"><option value="">${t('Any source')}</option></select></div>
+        <div class="kind-tabs mb" data-filters role="tablist" aria-label="${t('Smart filters')}"></div>
         <div data-bulk></div>
         <section class="panel" data-table>${raw('<div class="panel-body">' + skel(8).s + '</div>')}</section>
       </div></div></div>`.s;
@@ -29,12 +32,23 @@ export async function render(ctx) {
       ${st.tags.map((x) => html`<a href="#" class="nav-item tagnav ${st.tag === x.tag ? 'on' : ''}" data-tag="${x.tag}"><span class="tag">${x.tag}</span><span class="grow"></span><span class="badge">${fmtNum(x.count)}</span></a>`)}
       ${st.tags.length ? '' : html`<p class="cell-sub" style="padding:8px 10px">${t('Tags you add show up here.')}</p>`}`.s;
   }
+  const FILTERS = [['', 'All', 'total'], ['new', 'New this week', 'new'], ['active', 'Active (30 d)', 'active'], ['inactive', 'Silent 90+ d', 'inactive'], ['noname', 'No name', 'noname'], ['duplicates', 'Duplicate names', 'duplicates'], ['untagged', 'Untagged', 'untagged']];
+  async function loadStats() {
+    const j = await api('GET', '/api/contacts/stats', undefined, { silent: true });
+    if (!ctx.isCurrent() || !j.ok) return;
+    st.stats = j;
+    root.querySelector('[data-filters]').innerHTML = FILTERS.map(([k, l, c]) => html`<button type="button" role="tab" data-filter="${k}" aria-selected="${st.filter === k}">${t(l)} <span class="badge">${fmtNum(j[c] || 0)}</span></button>`.s).join('');
+    const srcSel = root.querySelector('[data-source]');
+    srcSel.innerHTML = html`<option value="">${t('Any source')}</option>${Object.entries(j.sources || {}).map(([k, n]) => html`<option value="${k}" ${st.source === k ? 'selected' : ''}>${t(k)} (${fmtNum(n)})</option>`)}`.s;
+  }
   async function load() {
-    const p = new URLSearchParams({ q: st.q, tag: st.tag, opted_out: st.opted, page: st.page, limit: LIMIT });
+    const p = new URLSearchParams({ q: st.q, tag: st.tag, opted_out: st.opted, filter: st.filter, source: st.source, page: st.page, limit: LIMIT });
     const j = await api('GET', '/api/contacts?' + p, undefined, { silent: true });
     if (!ctx.isCurrent()) return;
     st.list = j.ok ? j.contacts || [] : []; st.total = j.total || 0;
-    root.querySelector('[data-export]').href = '/api/contacts/export.csv' + (st.tag ? '?tag=' + encodeURIComponent(st.tag) : '');
+    const qs = st.tag ? '?tag=' + encodeURIComponent(st.tag) : '';
+    root.querySelector('[data-export]').href = '/api/contacts/export.csv' + qs;
+    root.querySelector('[data-export-vcf]').href = '/api/contacts/export.vcf' + qs;
     drawTable();
   }
   function drawTable() {
@@ -67,6 +81,8 @@ export async function render(ctx) {
     b.innerHTML = html`<div class="bulkbar" role="region" aria-label="${t('Bulk actions')}"><b>${t('{n} selected', { n: st.sel.size })}</b>
       <button class="btn sm" data-bulk="add_tag">${ic('plus', 14)}${t('Add tag')}</button><button class="btn sm" data-bulk="remove_tag">${t('Remove tag')}</button>
       <button class="btn sm" data-bulk="opt_out">${t('Opt out')}</button><button class="btn sm" data-bulk="opt_in">${t('Opt in')}</button>
+      ${st.sel.size > 1 && st.sel.size <= 51 ? html`<button class="btn sm" data-bulk="merge">${ic('users', 14)}${t('Merge into one')}</button>` : ''}
+      <a class="btn sm" href="/api/contacts/export.vcf?ids=${[...st.sel].join(',')}" download>${ic('phone', 14)}${t('VCF')}</a>
       <button class="btn sm" data-bulk="delete">${ic('trash', 14)}${t('Delete')}</button><button class="btn-icon" data-bulk="clear" aria-label="${t('Clear selection')}" style="color:inherit">${ic('x')}</button></div>`.s;
   }
 
@@ -87,7 +103,9 @@ export async function render(ctx) {
     if (e.target.matches('[data-sel]')) { const id = +e.target.dataset.sel; e.target.checked ? st.sel.add(id) : st.sel.delete(id); e.target.closest('tr').classList.toggle('sel', e.target.checked); drawBulk(); }
     if (e.target.matches('[data-all]')) { st.list.forEach((c) => (e.target.checked ? st.sel.add(c.id) : st.sel.delete(c.id))); drawTable(); }
     if (e.target.matches('[data-opted]')) { st.opted = e.target.value; st.page = 1; load(); }
+    if (e.target.matches('[data-source]')) { st.source = e.target.value; st.page = 1; load(); }
   });
+  root.querySelector('[data-filters]').addEventListener('click', (e) => { const b = e.target.closest('[data-filter]'); if (!b) return; st.filter = b.dataset.filter; st.page = 1; root.querySelectorAll('[data-filter]').forEach((x) => x.setAttribute('aria-selected', x === b)); load(); });
   root.querySelector('[data-q]').addEventListener('input', debounce((e) => { st.q = e.target.value.trim(); st.page = 1; load(); }, 300));
 
   async function bulk(action) {
@@ -98,9 +116,21 @@ export async function render(ctx) {
       tag = await promptBox(action === 'add_tag' ? t('Add tag') : t('Remove tag'), { label: t('Tag'), placeholder: 'vip' });
       if (!tag) return;
     }
+    if (action === 'merge') {
+      const people = st.list.filter((c) => st.sel.has(c.id));
+      const m = modal({ title: t('Merge {n} contacts', { n: ids.length }), body: html`<form class="stack"><p class="lead">${t('Which one stays? The others’ tags, notes and details are added to it and their numbers are kept as “other_phone”. Follow-ups, renewals and tasks move over.')}</p>
+          ${people.map((c, i) => html`<label class="choice"><input type="radio" name="keep" value="${c.id}" ${i === 0 ? 'checked' : ''}><b>${c.name || fmtPhone(c.phone)}</b><small>${fmtPhone(c.phone)}${c.tags?.length ? ' · ' + c.tags.join(', ') : ''}</small></label>`)}</form>`,
+        footer: html`<button class="btn ghost" data-close>${t('Cancel')}</button><button class="btn primary" data-ok>${t('Merge')}</button>` });
+      m.foot.querySelector('[data-ok]').addEventListener('click', async () => {
+        const keep = +m.body.querySelector('[name=keep]:checked').value;
+        const j = await api('POST', '/api/contacts/merge', { keep, remove: ids.filter((x) => x !== keep) });
+        if (j.ok) { m.close(); toast(t('Merged {n} contacts', { n: j.merged })); st.sel.clear(); load(); loadTags(); loadStats(); }
+      });
+      return;
+    }
     if (action === 'delete' && !(await confirmBox(t('Delete {n} contacts? This cannot be undone.', { n: ids.length }), { okText: t('Delete'), danger: true }))) return;
     const j = await api('POST', '/api/contacts/bulk', { ids, action, tag });
-    if (j.ok) { toast(t('Updated {n} contacts', { n: ids.length })); st.sel.clear(); load(); loadTags(); }
+    if (j.ok) { toast(t('Updated {n} contacts', { n: ids.length })); st.sel.clear(); load(); loadTags(); loadStats(); }
   }
 
   function editDrawer(c) {
@@ -162,5 +192,5 @@ export async function render(ctx) {
     });
   }
 
-  await Promise.all([loadTags(), load()]);
+  await Promise.all([loadTags(), load(), loadStats()]);
 }
