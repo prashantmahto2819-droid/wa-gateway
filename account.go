@@ -22,7 +22,21 @@ func (a *API) me(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "unauthorized", errors.New("account not found"))
 		return
 	}
-	out := map[string]any{"ok": true, "user": u, "licence": a.lic.effective(ctx, u.ID), "usage": a.lic.usage(ctx, u.ID), "mode": a.mode()}
+	out := map[string]any{"ok": true, "user": u, "licence": a.lic.effective(ctx, u.ID), "usage": a.lic.usage(ctx, u.ID), "mode": a.mode(),
+		"workspace": map[string]any{"id": p.UserID, "role": p.WorkspaceRole, "actor_id": p.ActorID}}
+	if p.ActorID != p.UserID {
+		if me, err := getUser(ctx, a.m.db, p.ActorID); err == nil {
+			out["actor"] = me
+		}
+		if owner, err := getUser(ctx, a.m.db, p.UserID); err == nil {
+			out["workspace"].(map[string]any)["owner"] = owner.Name
+		}
+	}
+	can := map[string]bool{}
+	for k := range perms {
+		can[k] = p.can(k)
+	}
+	out["can"] = can
 	if a.lic.clientMode() {
 		out["licence_error"] = a.lic.clientError()
 	}
@@ -102,7 +116,7 @@ func (a *API) redeemLicence(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_licence", err)
 		return
 	}
-	audit(r.Context(), a.m.db, p.UserID, clientIP(r), "licence.redeem", maskKey(strings.ToUpper(b.Key)))
+	audit(r.Context(), a.m.db, p.ActorID, clientIP(r), "licence.redeem", maskKey(strings.ToUpper(b.Key)))
 	a.licenceInfo(w, r)
 }
 
@@ -157,7 +171,7 @@ func (a *API) createKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, _ := res.LastInsertId()
-	audit(r.Context(), a.m.db, p.UserID, clientIP(r), "apikey.create", b.Name)
+	audit(r.Context(), a.m.db, p.ActorID, clientIP(r), "apikey.create", b.Name)
 	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "secret": secret,
 		"key": map[string]any{"id": id, "name": b.Name, "prefix": prefix, "created_at": now, "last_used": 0}})
 }
@@ -169,7 +183,7 @@ func (a *API) deleteKey(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not_found", errors.New("key not found"))
 		return
 	}
-	audit(r.Context(), a.m.db, p.UserID, clientIP(r), "apikey.delete", r.PathValue("id"))
+	audit(r.Context(), a.m.db, p.ActorID, clientIP(r), "apikey.delete", r.PathValue("id"))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

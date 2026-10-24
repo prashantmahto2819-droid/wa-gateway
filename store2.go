@@ -195,6 +195,29 @@ CREATE TABLE IF NOT EXISTS webhook_endpoints (
 	last_at     INTEGER NOT NULL DEFAULT 0,
 	created_at  INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS members (
+	user_id      INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+	workspace_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	role         TEXT NOT NULL DEFAULT 'agent',
+	team         TEXT NOT NULL DEFAULT '',
+	status       TEXT NOT NULL DEFAULT 'active',
+	added_at     INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS members_ws ON members(workspace_id);
+CREATE TABLE IF NOT EXISTS invites (
+	id           INTEGER PRIMARY KEY AUTOINCREMENT,
+	workspace_id INTEGER NOT NULL,
+	token_hash   TEXT NOT NULL UNIQUE,
+	name         TEXT NOT NULL DEFAULT '',
+	email        TEXT NOT NULL DEFAULT '',
+	role         TEXT NOT NULL,
+	team         TEXT NOT NULL DEFAULT '',
+	created_by   INTEGER NOT NULL,
+	created_at   INTEGER NOT NULL,
+	expires_at   INTEGER NOT NULL,
+	used_at      INTEGER NOT NULL DEFAULT 0,
+	used_by      INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS send_lists (
 	id          INTEGER PRIMARY KEY AUTOINCREMENT,
 	owner_id    INTEGER NOT NULL,
@@ -261,6 +284,7 @@ func migrate2(db *sql.DB) error {
 		{"gw_outbox", "speed_factor", "INTEGER NOT NULL DEFAULT 1"},
 		{"gw_outbox", "owner_id", "INTEGER NOT NULL DEFAULT 0"},
 		{"campaigns", "rotation", "TEXT NOT NULL DEFAULT 'smart'"},
+		{"plans", "limits", "TEXT NOT NULL DEFAULT '{}'"},
 		{"campaigns", "gap_min", "INTEGER NOT NULL DEFAULT 0"},
 		{"campaigns", "gap_max", "INTEGER NOT NULL DEFAULT 0"},
 	}

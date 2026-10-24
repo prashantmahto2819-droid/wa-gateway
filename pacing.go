@@ -197,7 +197,7 @@ func (a *API) saveAdminPacing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.m.forgetPacing()
-	audit(r.Context(), a.m.db, principalOf(r).UserID, clientIP(r), "pacing.update", jsonText(body))
+	audit(r.Context(), a.m.db, principalOf(r).ActorID, clientIP(r), "pacing.update", jsonText(body))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "pacing": a.m.adminPacing(r.Context())})
 }
 

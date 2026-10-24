@@ -21,12 +21,24 @@ import (
 
 // Principal is who is making a request.
 type Principal struct {
-	UserID int64
-	Role   string
-	Email  string
-	Name   string
-	ViaKey bool // user API key
-	Master bool // .env API_KEY
+	UserID        int64  // the workspace (owner) everything is keyed on
+	ActorID       int64  // the person actually logged in (same as UserID for owners)
+	WorkspaceRole string // owner | admin | manager | supervisor | agent | analyst
+	Role          string // account role: superadmin | user
+	Email         string
+	Name          string
+	ViaKey        bool // user API key
+	Master        bool // .env API_KEY
+}
+
+// asWorkspace fills the workspace fields for a logged-in user.
+func (p *Principal) asWorkspace(ctx context.Context, db *sql.DB) *Principal {
+	p.ActorID = p.UserID
+	p.WorkspaceRole = "owner"
+	if p.Role != "superadmin" {
+		p.UserID, p.WorkspaceRole = workspaceOf(ctx, db, p.UserID)
+	}
+	return p
 }
 
 func (p *Principal) Admin() bool { return p != nil && p.Role == "superadmin" }
@@ -221,7 +233,7 @@ func (a *API) resolvePrincipal(r *http.Request) (*Principal, error) {
 	if key != "" {
 		if subtle.ConstantTimeCompare([]byte(key), []byte(a.cfg.APIKey)) == 1 {
 			p := &Principal{UserID: firstAdminID(ctx, a.m.db), Role: "superadmin", Master: true, Name: "master key"}
-			return p, nil
+			return p.asWorkspace(ctx, a.m.db), nil
 		}
 		if strings.HasPrefix(key, "vr_") {
 			var uid, kid int64
@@ -229,7 +241,7 @@ func (a *API) resolvePrincipal(r *http.Request) (*Principal, error) {
 				u, err := getUser(ctx, a.m.db, uid)
 				if err == nil && u.Status == "active" {
 					_, _ = a.m.db.ExecContext(ctx, `UPDATE api_keys SET last_used=? WHERE id=?`, time.Now().Unix(), kid)
-					return &Principal{UserID: u.ID, Role: u.Role, Email: u.Email, Name: u.Name, ViaKey: true}, nil
+					return (&Principal{UserID: u.ID, Role: u.Role, Email: u.Email, Name: u.Name, ViaKey: true}).asWorkspace(ctx, a.m.db), nil
 				}
 			}
 		}
@@ -251,7 +263,7 @@ func (a *API) resolvePrincipal(r *http.Request) (*Principal, error) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Header.Get("X-Requested-With") != "vivid" {
 		return nil, errors.New("missing X-Requested-With header")
 	}
-	return &Principal{UserID: u.ID, Role: u.Role, Email: u.Email, Name: u.Name}, nil
+	return (&Principal{UserID: u.ID, Role: u.Role, Email: u.Email, Name: u.Name}).asWorkspace(ctx, a.m.db), nil
 }
 
 // ---------- login rate limiting ----------

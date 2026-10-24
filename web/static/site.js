@@ -133,6 +133,21 @@
     });
   });
 
+  /* Staff invite page */
+  (function () {
+    var form = $('[data-join-form]'); if (!form) return;
+    var token = new URLSearchParams(location.search).get('token') || '';
+    var lede = $('[data-join-lede]'), err = $('[data-join-err]');
+    form.querySelector('[name=token]').value = token;
+    fetch('/auth/invite?token=' + encodeURIComponent(token)).then(function (r) { return r.json(); }).then(function (j) {
+      if (!j.ok) { lede.hidden = true; err.hidden = false; err.textContent = j.error || 'This invite link is invalid or has expired.'; return; }
+      lede.textContent = 'You are invited to ' + (j.business || 'a workspace') + ' as ' + j.role + '. Set your password to get in.';
+      if (j.name) form.querySelector('[name=name]').value = j.name;
+      if (j.email) { var em = form.querySelector('[name=email]'); em.value = j.email; em.readOnly = true; }
+      form.hidden = false;
+    }).catch(function () { lede.textContent = 'Could not check the invite. Reload the page.'; });
+  })();
+
   /* JSON forms: <form data-api="/auth/login" data-redirect="/app" data-success="..."> */
   $$('form[data-api]').forEach(function (form) {
     var msg = $('.form__msg', form);

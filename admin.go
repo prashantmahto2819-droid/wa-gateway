@@ -133,7 +133,7 @@ func (a *API) adminUpdateUser(w http.ResponseWriter, r *http.Request) {
 	if b.Name != nil {
 		_, _ = a.m.db.ExecContext(r.Context(), `UPDATE users SET name=? WHERE id=?`, truncate(*b.Name, 100), id)
 	}
-	audit(r.Context(), a.m.db, p.UserID, clientIP(r), "user.update", u.Email)
+	audit(r.Context(), a.m.db, p.ActorID, clientIP(r), "user.update", u.Email)
 	nu, _ := getUser(r.Context(), a.m.db, id)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "user": nu})
 }
@@ -150,7 +150,7 @@ func (a *API) adminResetPassword(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, err)
 		return
 	}
-	audit(r.Context(), a.m.db, principalOf(r).UserID, clientIP(r), "user.reset_password", u.Email)
+	audit(r.Context(), a.m.db, principalOf(r).ActorID, clientIP(r), "user.reset_password", u.Email)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "password": pw})
 }
 
@@ -174,7 +174,7 @@ func (a *API) adminGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, _ = a.m.db.ExecContext(r.Context(), `UPDATE licences SET status='expired', expires_at=? WHERE user_id=? AND lkey LIKE 'TRIAL-%' AND status='active'`, time.Now().Unix(), id)
-	audit(r.Context(), a.m.db, principalOf(r).UserID, clientIP(r), "licence.grant", fmt.Sprintf("%s plan=%d days=%d", u.Email, b.PlanID, b.Days))
+	audit(r.Context(), a.m.db, principalOf(r).ActorID, clientIP(r), "licence.grant", fmt.Sprintf("%s plan=%d days=%d", u.Email, b.PlanID, b.Days))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "licence": a.lic.effective(r.Context(), id)})
 }
 
@@ -202,7 +202,7 @@ func (a *API) adminDeleteUser(w http.ResponseWriter, r *http.Request) {
 		_, _ = a.m.db.ExecContext(ctx, q, id)
 	}
 	_ = os.RemoveAll(a.m.mediaDir(id))
-	audit(ctx, a.m.db, p.UserID, clientIP(r), "user.delete", u.Email)
+	audit(ctx, a.m.db, p.ActorID, clientIP(r), "user.delete", u.Email)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -240,7 +240,7 @@ func (a *API) adminSavePlan(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", err)
 		return
 	}
-	audit(r.Context(), a.m.db, principalOf(r).UserID, clientIP(r), "plan.save", p.Name)
+	audit(r.Context(), a.m.db, principalOf(r).ActorID, clientIP(r), "plan.save", p.Name)
 	saved, _ := getPlan(r.Context(), a.m.db, id)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "plan": saved})
 }
@@ -439,7 +439,7 @@ func (a *API) adminUpdateLicence(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) adminDeleteLicence(w http.ResponseWriter, r *http.Request) {
 	_, _ = a.m.db.ExecContext(r.Context(), `DELETE FROM licences WHERE id=?`, r.PathValue("id"))
-	audit(r.Context(), a.m.db, principalOf(r).UserID, clientIP(r), "licence.delete", r.PathValue("id"))
+	audit(r.Context(), a.m.db, principalOf(r).ActorID, clientIP(r), "licence.delete", r.PathValue("id"))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -493,7 +493,7 @@ func (a *API) adminSaveSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = setSetting(r.Context(), a.m.db, k, truncate(val, 2000))
 	}
-	audit(r.Context(), a.m.db, principalOf(r).UserID, clientIP(r), "settings.update", "")
+	audit(r.Context(), a.m.db, principalOf(r).ActorID, clientIP(r), "settings.update", "")
 	a.adminSettings(w, r)
 }
 

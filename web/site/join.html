@@ -1,0 +1,24 @@
+{{define "content"}}
+<div class="auth">
+  <section class="auth__main" aria-labelledby="join-title">
+    <div class="auth__box">
+      <h1 id="join-title">Join your team</h1>
+      <p class="lede" data-join-lede>Checking your invite…</p>
+      <form class="form" data-api="/auth/join" data-redirect="/app" novalidate hidden data-join-form>
+        <input type="hidden" name="token" value="">
+        <div class="field"><label for="j-name">Your name</label><input id="j-name" name="name" type="text" autocomplete="name" required></div>
+        <div class="field"><label for="j-email">Email</label><input id="j-email" name="email" type="email" autocomplete="email" required></div>
+        <div class="field"><label for="j-pass">Choose a password</label><div class="pw"><input id="j-pass" name="password" type="password" autocomplete="new-password" required minlength="8"><button type="button" data-pw-toggle aria-pressed="false" aria-controls="j-pass">Show</button></div></div>
+        <button class="btn btn--deep btn--lg btn--block" type="submit" data-busy="Joining…">Join and open the dashboard</button>
+        <p class="form__msg" role="alert" aria-live="assertive"></p>
+      </form>
+      <p class="form__msg is-err" data-join-err hidden></p>
+      <p class="auth__alt">Already have a login? <a href="/login">Log in</a></p>
+    </div>
+  </section>
+  <aside class="auth__side" aria-hidden="true">
+    <div class="hero__mesh"></div>
+    <div><p class="hi" lang="hi">टीम के साथ, एक जगह।</p><h2>One workspace for the whole team</h2></div>
+  </aside>
+</div>
+{{end}}

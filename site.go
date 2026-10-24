@@ -34,6 +34,7 @@ var sitePages = map[string]sitePage{
 	"/docs":     {"docs.html", "API docs", "Developer quickstart: send messages, queue campaigns and verify webhooks."},
 	"/login":    {"login.html", "Log in", "Log in to your Vivid Relay dashboard."},
 	"/signup":   {"signup.html", "Start free trial", "Create your Vivid Relay account."},
+	"/join":     {"join.html", "Join your team", "Accept an invite to a Vivid Relay workspace."},
 	"/setup":    {"setup.html", "First-time setup", "Create the owner account."},
 }
 

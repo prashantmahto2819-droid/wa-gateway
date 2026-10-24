@@ -422,7 +422,7 @@ func (a *API) importContacts(w http.ResponseWriter, r *http.Request) {
 			updated++
 		}
 	}
-	audit(ctx, a.m.db, p.UserID, clientIP(r), "contacts.import", strconv.Itoa(created+updated)+" rows")
+	audit(ctx, a.m.db, p.ActorID, clientIP(r), "contacts.import", strconv.Itoa(created+updated)+" rows")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "created": created, "updated": updated, "invalid": invalid})
 }
 

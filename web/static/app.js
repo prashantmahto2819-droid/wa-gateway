@@ -19,6 +19,7 @@ const ROUTES = [
   { re: /^\/app\/developer\/?$/, mod: 'developer', nav: 'developer' },
   { re: /^\/app\/licence\/?$/, mod: 'licence', nav: 'licence' },
   { re: /^\/app\/settings\/?$/, mod: 'settings', nav: 'settings' },
+  { re: /^\/app\/team\/?$/, mod: 'team', nav: 'team', perm: 'read' },
   { re: /^\/app\/admin\/?$/, mod: 'admin', nav: 'admin', view: 'overview', admin: true },
   { re: /^\/app\/admin\/(users|plans|licences|activations|settings|inbox|server|audit)\/?$/, mod: 'admin', nav: 'admin-$1', keys: ['view'], admin: true },
 ];
@@ -28,7 +29,7 @@ const NAV = [
     ['overview', '/app', 'home', 'Overview'],
     ['numbers', '/app/numbers', 'phone', 'Numbers'],
     ['send', '/app/send', 'send', 'Send'],
-    ['campaigns', '/app/campaigns', 'megaphone', 'Campaigns'],
+    ['campaigns', '/app/campaigns', 'megaphone', 'Campaigns', 'read'],
     ['scheduled', '/app/scheduled', 'calendar', 'Scheduled'],
   ] },
   { group: 'Audience', items: [
@@ -39,11 +40,12 @@ const NAV = [
   { group: 'Content', items: [
     ['media', '/app/media', 'image', 'Media library'],
     ['templates', '/app/templates', 'template', 'Templates'],
-    ['autoreplies', '/app/autoreplies', 'bot', 'Auto-replies'],
+    ['autoreplies', '/app/autoreplies', 'bot', 'Auto-replies', 'automation'],
   ] },
   { group: 'Account', items: [
-    ['developer', '/app/developer', 'code', 'Developer'],
-    ['licence', '/app/licence', 'shield', 'Licence'],
+    ['team', '/app/team', 'users', 'Team'],
+    ['developer', '/app/developer', 'code', 'Developer', 'integration'],
+    ['licence', '/app/licence', 'shield', 'Licence', 'billing'],
     ['settings', '/app/settings', 'settings', 'Settings'],
   ] },
 ];
@@ -84,7 +86,10 @@ function navLink([key, href, ico, label]) {
 function renderShell() {
   const me = state.me, u = me.user || {};
   const adminNav = { ...ADMIN_NAV, items: ADMIN_NAV.items.filter(([k]) => me.mode !== 'client' || !CLIENT_HIDDEN.includes(k)) };
-  const groups = [...NAV, ...(u.role === 'superadmin' ? [adminNav] : [])];
+  const can = me.can || {};
+  const allowed = (it) => !it[4] || can[it[4]] !== false;
+  const groups = [...NAV.map((g) => ({ ...g, items: g.items.filter(allowed) })).filter((g) => g.items.length), ...(u.role === 'superadmin' ? [adminNav] : [])];
+  const ws = me.workspace || {};
   const lic = me.licence || {};
   const initials = (u.name || u.email || '?').split(/\s+/).map((x) => x[0]).slice(0, 2).join('').toUpperCase();
   $('#app').innerHTML = html`
@@ -105,7 +110,7 @@ function renderShell() {
         </a>
         <div class="me-row">
           <span class="avatar" aria-hidden="true">${initials}</span>
-          <span class="me-text"><b>${u.name || u.email}</b><small>${u.role === 'superadmin' ? t('Super admin') : u.email}</small></span>
+          <span class="me-text"><b>${(me.actor || u).name || (me.actor || u).email}</b><small>${u.role === 'superadmin' ? t('Super admin') : ws.owner ? t('{r} at {b}', { r: t(ws.role), b: ws.owner }) : u.email}</small></span>
           <button class="btn-icon" data-act="logout" aria-label="${t('Log out')}" title="${t('Log out')}">${ic('logout')}</button>
         </div>
       </div>

@@ -40,23 +40,39 @@ func (e *limitError) Is(t error) bool {
 var allFeatures = []string{"campaigns", "scheduler", "autoreply", "pool", "api", "webhooks", "groups", "status", "polls", "ai"}
 
 type Plan struct {
-	ID              int64           `json:"id"`
-	Name            string          `json:"name"`
-	Description     string          `json:"description"`
-	Price           float64         `json:"price"`
-	Currency        string          `json:"currency"`
-	PeriodDays      int64           `json:"period_days"`
-	MaxNumbers      int64           `json:"max_numbers"`      // 0 = unlimited
-	DailyLimit      int64           `json:"daily_limit"`      // per number, 0 = gateway default
-	MonthlyMessages int64           `json:"monthly_messages"` // 0 = unlimited
-	MaxContacts     int64           `json:"max_contacts"`     // 0 = unlimited
-	StorageMB       int64           `json:"storage_mb"`       // 0 = unlimited
-	Features        map[string]bool `json:"features"`
-	Public          bool            `json:"public"`
-	Trial           bool            `json:"trial"`
-	Highlight       bool            `json:"highlight"`
-	Sort            int64           `json:"sort"`
-	Unlimited       bool            `json:"unlimited,omitempty"`
+	ID              int64            `json:"id"`
+	Name            string           `json:"name"`
+	Description     string           `json:"description"`
+	Price           float64          `json:"price"`
+	Currency        string           `json:"currency"`
+	PeriodDays      int64            `json:"period_days"`
+	MaxNumbers      int64            `json:"max_numbers"`      // 0 = unlimited
+	DailyLimit      int64            `json:"daily_limit"`      // per number, 0 = gateway default
+	MonthlyMessages int64            `json:"monthly_messages"` // 0 = unlimited
+	MaxContacts     int64            `json:"max_contacts"`     // 0 = unlimited
+	StorageMB       int64            `json:"storage_mb"`       // 0 = unlimited
+	Features        map[string]bool  `json:"features"`
+	Public          bool             `json:"public"`
+	Trial           bool             `json:"trial"`
+	Highlight       bool             `json:"highlight"`
+	Sort            int64            `json:"sort"`
+	Unlimited       bool             `json:"unlimited,omitempty"`
+	Limits          map[string]int64 `json:"limits"` // staff seats, websites, flows, kits … (0 = no limit)
+}
+
+func orLimits(m map[string]int64) map[string]int64 {
+	if m == nil {
+		return map[string]int64{}
+	}
+	return m
+}
+
+// Limit reads a numeric limit kept in features (e.g. "staff": seats, "websites", "flows"); 0 = not set.
+func (p *Plan) Limit(name string) int64 {
+	if p == nil {
+		return 0
+	}
+	return p.Limits[name]
 }
 
 func (p *Plan) has(feature string) bool {
@@ -69,16 +85,18 @@ func (p *Plan) has(feature string) bool {
 	return p.Features[feature]
 }
 
-const planCols = `id, name, description, price, currency, period_days, max_numbers, daily_limit, monthly_messages, max_contacts, storage_mb, features, public, trial, highlight, sort`
+const planCols = `id, name, description, price, currency, period_days, max_numbers, daily_limit, monthly_messages, max_contacts, storage_mb, features, public, trial, highlight, sort, limits`
 
 func scanPlan(row interface{ Scan(...any) error }) (*Plan, error) {
 	var p Plan
-	var feats string
+	var feats, lims string
 	var pub, trial, hl int
 	if err := row.Scan(&p.ID, &p.Name, &p.Description, &p.Price, &p.Currency, &p.PeriodDays, &p.MaxNumbers, &p.DailyLimit,
-		&p.MonthlyMessages, &p.MaxContacts, &p.StorageMB, &feats, &pub, &trial, &hl, &p.Sort); err != nil {
+		&p.MonthlyMessages, &p.MaxContacts, &p.StorageMB, &feats, &pub, &trial, &hl, &p.Sort, &lims); err != nil {
 		return nil, err
 	}
+	p.Limits = map[string]int64{}
+	_ = json.Unmarshal([]byte(lims), &p.Limits)
 	p.Features = map[string]bool{}
 	_ = json.Unmarshal([]byte(feats), &p.Features)
 	for _, f := range allFeatures {
@@ -128,14 +146,14 @@ func savePlan(ctx context.Context, db *sql.DB, p *Plan) (int64, error) {
 		feats[f] = p.Features[f]
 	}
 	args := []any{p.Name, p.Description, p.Price, p.Currency, p.PeriodDays, p.MaxNumbers, p.DailyLimit, p.MonthlyMessages,
-		p.MaxContacts, p.StorageMB, jsonText(feats), b2i(p.Public), b2i(p.Trial), b2i(p.Highlight), p.Sort}
+		p.MaxContacts, p.StorageMB, jsonText(feats), b2i(p.Public), b2i(p.Trial), b2i(p.Highlight), p.Sort, jsonText(orLimits(p.Limits))}
 	if p.ID > 0 {
 		_, err := db.ExecContext(ctx, `UPDATE plans SET name=?, description=?, price=?, currency=?, period_days=?, max_numbers=?, daily_limit=?,
-			monthly_messages=?, max_contacts=?, storage_mb=?, features=?, public=?, trial=?, highlight=?, sort=? WHERE id=?`, append(args, p.ID)...)
+			monthly_messages=?, max_contacts=?, storage_mb=?, features=?, public=?, trial=?, highlight=?, sort=?, limits=? WHERE id=?`, append(args, p.ID)...)
 		return p.ID, err
 	}
 	res, err := db.ExecContext(ctx, `INSERT INTO plans(name, description, price, currency, period_days, max_numbers, daily_limit, monthly_messages,
-		max_contacts, storage_mb, features, public, trial, highlight, sort, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, append(args, time.Now().Unix())...)
+		max_contacts, storage_mb, features, public, trial, highlight, sort, limits, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, append(args, time.Now().Unix())...)
 	if err != nil {
 		return 0, err
 	}
