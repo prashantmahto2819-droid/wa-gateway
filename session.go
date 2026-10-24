@@ -147,6 +147,7 @@ type SessionSettings struct {
 	AutoSaveContacts bool   `json:"auto_save_contacts"`
 	AlwaysOnline     bool   `json:"always_online"`
 	TakeoverMinutes  int    `json:"takeover_minutes"`
+	DailyLimit       int    `json:"daily_limit"` // the owner's own cap for this number (0 = no extra cap)
 }
 
 func (s *Session) settings(ctx context.Context) SessionSettings {
@@ -157,6 +158,15 @@ func (s *Session) settings(ctx context.Context) SessionSettings {
 		_ = json.Unmarshal([]byte(raw), &st)
 	}
 	return st
+}
+
+// reconnectIfLinked restarts a linked number's connection (new proxy etc.).
+func (s *Session) reconnectIfLinked(ctx context.Context) {
+	if row := s.row(ctx); row.jid != "" {
+		if jid, err := types.ParseJID(row.jid); err == nil {
+			go func() { _ = s.connectExisting(s.m.ctx, jid) }()
+		}
+	}
 }
 
 // ready returns the client only if it is linked and connected.

@@ -33,12 +33,19 @@ export async function pacingPanel(box, { admin = false } = {}) {
         ${num('floor_gap', p.floor_gap, 1, 'Smallest campaign gap anyone may use', 'seconds')}
         ${num('floor_api_gap', p.floor_api_gap, 0, 'Smallest API / auto-reply gap anyone may use', 'seconds')}
         ${num('status_max', p.status_max || 30000, 10, 'Most people one Status goes to', 'people')}</div>
-      ${toggle('users_can_change', !!p.users_can_change, t('Users may change their own pace'), t('They can only go slower than these limits, never faster.'))}</section>`
+      ${toggle('users_can_change', !!p.users_can_change, t('Users may change their own pace'), t('They can only go slower than these limits, never faster.'))}</section>
+    <section><h3 class="mb">${ic('chart', 16)} ${t('Quota engine — how much a number may send')}</h3>
+      <div class="form-grid">
+        ${num('warmup_start', p.warmup_start, 0, 'Day 1 allowance for a newly linked number', 'messages')}
+        ${num('warmup_growth_pct', p.warmup_growth_pct, 0, 'Growth per day', '%')}
+        ${num('daily_limit', p.daily_limit, 1, 'Ceiling per number per day', 'messages')}
+        ${num('new_contact_limit', p.new_contact_limit, 1, 'First-time contacts per number per day', 'people')}</div>
+      <p class="hint">${t('Example: 20 on day 1 and 60 % growth → 32, 51, 82, 131 … until the ceiling. A plan cap and the number’s own limit (Numbers → settings) can only lower this. 0 for day 1 = no warm-up.')}</p></section>`
     : html`<p class="hint">${t('Limits set by the administrator: campaign gap at least {a} s, API gap at least {b} s.', { a: floorGap, b: floorAPI })}</p>`}
     ${locked ? '' : html`<div class="row" style="justify-content:flex-end;gap:8px">${admin ? '' : html`<button type="button" class="btn ghost" data-reset>${t('Use the defaults')}</button>`}<button class="btn primary">${t('Save sending settings')}</button></div>`}
   </form>`.s;
   const f = box.querySelector('[data-pace]');
-  const ints = ['gap_min', 'gap_max', 'batch_size', 'batch_pause_min', 'api_gap_min', 'api_gap_max', 'reply_delay_min', 'reply_delay_max', 'floor_gap', 'floor_api_gap', 'status_max'];
+  const ints = ['gap_min', 'gap_max', 'batch_size', 'batch_pause_min', 'api_gap_min', 'api_gap_max', 'reply_delay_min', 'reply_delay_max', 'floor_gap', 'floor_api_gap', 'status_max', 'warmup_start', 'warmup_growth_pct', 'daily_limit', 'new_contact_limit'];
   f.addEventListener('submit', async (e) => {
     e.preventDefault();
     const d = {};

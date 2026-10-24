@@ -223,6 +223,13 @@ func (a *API) routes() http.Handler {
 
 	// Admin
 	mux.HandleFunc("GET /api/admin/overview", admin(a.adminOverview))
+	mux.HandleFunc("GET /api/admin/proxies", admin(a.adminProxies))
+	mux.HandleFunc("POST /api/admin/proxies", admin(a.adminSaveProxy))
+	mux.HandleFunc("POST /api/admin/proxies/settings", admin(a.adminProxySettings))
+	mux.HandleFunc("PATCH /api/admin/proxies/{id}", admin(a.adminSaveProxy))
+	mux.HandleFunc("DELETE /api/admin/proxies/{id}", admin(a.adminDeleteProxy))
+	mux.HandleFunc("POST /api/admin/proxies/{id}/test", admin(a.adminTestProxy))
+	mux.HandleFunc("GET /api/proxies", auth(a.requirePerm("numbers", a.listMyProxies)))
 	mux.HandleFunc("GET /api/admin/users", admin(a.adminUsers))
 	mux.HandleFunc("PATCH /api/admin/users/{id}", admin(a.adminUpdateUser))
 	mux.HandleFunc("POST /api/admin/users/{id}/reset-password", admin(a.adminResetPassword))
@@ -424,6 +431,7 @@ func (a *API) sessionInfo(ctx context.Context, s *Session) map[string]any {
 		"name": s.name, "status": st, "error": lastErr, "jid": r.jid, "phone": strings.SplitN(strings.SplitN(r.jid, "@", 2)[0], ":", 2)[0],
 		"push_name": push, "paused": r.paused,
 		"today": map[string]any{"sent": sent, "limit": s.effectiveDailyLimit(ctx, r.pairedAt), "new_contacts": sentNew, "new_contact_limit": a.cfg.NewContactLimit},
+		"quota": s.quotaInfo(ctx, r),
 	}
 	if r.timelockUntil > now.Unix() {
 		info["timelock_until"] = r.timelockUntil
@@ -436,6 +444,12 @@ func (a *API) sessionInfo(ctx context.Context, s *Session) map[string]any {
 	}
 	if r.proxy != "" {
 		info["proxy"] = maskProxy(r.proxy)
+		var pid int64
+		var plabel string
+		_ = a.m.db.QueryRowContext(ctx, `SELECT g.proxy_id, COALESCE(p.label,'') FROM gw_sessions g LEFT JOIN proxies p ON p.id=g.proxy_id WHERE g.name=?`, s.name).Scan(&pid, &plabel)
+		if pid > 0 {
+			info["proxy_id"], info["proxy_label"] = pid, plabel
+		}
 	}
 	if r.pauseReason != "" && r.paused {
 		info["pause_reason"] = r.pauseReason
@@ -523,7 +537,8 @@ func (a *API) updateSession(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		WebhookURL *string          `json:"webhook_url"`
 		Paused     *bool            `json:"paused"`
-		Proxy      *string          `json:"proxy"` // "" removes it
+		Proxy      *string          `json:"proxy"`    // own proxy URL; "" removes it
+		ProxyID    *int64           `json:"proxy_id"` // a pool proxy from the admin (0 = none)
 		Label      *string          `json:"label"`
 		Settings   *SessionSettings `json:"settings"`
 	}
@@ -539,6 +554,7 @@ func (a *API) updateSession(w http.ResponseWriter, r *http.Request) {
 		st := *body.Settings
 		st.RejectMessage = truncate(strings.TrimSpace(st.RejectMessage), 500)
 		st.TakeoverMinutes = min(max(st.TakeoverMinutes, 0), 24*60)
+		st.DailyLimit = max(st.DailyLimit, 0)
 		_, _ = a.m.db.ExecContext(ctx, `UPDATE gw_sessions SET settings=? WHERE name=?`, jsonText(st), s.name)
 		if cli, err := s.ready(); err == nil {
 			if st.AlwaysOnline {
@@ -564,19 +580,32 @@ func (a *API) updateSession(w http.ResponseWriter, r *http.Request) {
 		}
 		s.poke()
 	}
-	if body.Proxy != nil {
+	pr := principalOf(r)
+	if body.ProxyID != nil {
+		// A pool proxy (admin-allocated): the number gets its URL without the user seeing it.
+		if *body.ProxyID > 0 {
+			px, err := a.m.proxyByID(ctx, *body.ProxyID, s.owner(), pr.Admin())
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, "bad_proxy", err)
+				return
+			}
+			_, _ = a.m.db.ExecContext(ctx, `UPDATE gw_sessions SET proxy=?, proxy_id=? WHERE name=?`, px.URL, px.ID, s.name)
+		} else {
+			_, _ = a.m.db.ExecContext(ctx, `UPDATE gw_sessions SET proxy='', proxy_id=0 WHERE name=?`, s.name)
+		}
+		s.reconnectIfLinked(ctx)
+	} else if body.Proxy != nil {
+		if !pr.Admin() && getSetting(ctx, a.m.db, "proxy_own_allowed") == "0" {
+			writeErr(w, http.StatusForbidden, "forbidden", errors.New("own proxy URLs are turned off by the admin — pick one from the pool"))
+			return
+		}
 		p, err := vetProxy(ctx, *body.Proxy, a.cfg.AllowPrivateURLs)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "bad_proxy", err)
 			return
 		}
-		_, _ = a.m.db.ExecContext(ctx, `UPDATE gw_sessions SET proxy=? WHERE name=?`, p, s.name)
-		// Reconnect a linked number so the new proxy takes effect now.
-		if row := s.row(ctx); row.jid != "" {
-			if jid, err := types.ParseJID(row.jid); err == nil {
-				go func() { _ = s.connectExisting(a.m.ctx, jid) }()
-			}
-		}
+		_, _ = a.m.db.ExecContext(ctx, `UPDATE gw_sessions SET proxy=?, proxy_id=0 WHERE name=?`, p, s.name)
+		s.reconnectIfLinked(ctx)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "session": a.sessionInfo(r.Context(), s)})
 }

@@ -94,25 +94,58 @@ func (s *Session) row(ctx context.Context) sessionRow {
 	return r
 }
 
-// dailyLimit grows from WARMUP_START by 1.6x per day after linking,
-// up to DAILY_LIMIT, so a freshly linked number doesn't send a flood.
+// dailyLimit is the quota engine: a freshly linked number starts at the
+// warm-up allowance and grows by the admin's percentage every day up to
+// the daily ceiling, so a new number never sends a flood. The admin's
+// settings (Admin → Pacing & quotas) override the .env values.
 func (s *Session) dailyLimit(pairedAt int64) int {
-	cfg := s.m.cfg
-	if cfg.WarmupStart <= 0 || pairedAt == 0 {
-		return cfg.DailyLimit
-	}
-	days := time.Since(time.Unix(pairedAt, 0)).Hours() / 24
-	l := float64(cfg.WarmupStart) * math.Pow(1.6, math.Floor(max(days, 0)))
-	return int(min(l, float64(cfg.DailyLimit)))
+	return quotaFor(s.m.adminPacing(s.m.ctx), s.m.cfg, pairedAt, time.Now())
 }
 
-// effectiveDailyLimit applies the plan's per-number cap on top of warm-up/DAILY_LIMIT.
+func quotaFor(a AdminPacing, cfg *Config, pairedAt int64, now time.Time) int {
+	start, growth, daily, _ := a.quota(cfg)
+	if start <= 0 || pairedAt == 0 {
+		return daily
+	}
+	days := now.Sub(time.Unix(pairedAt, 0)).Hours() / 24
+	l := float64(start) * math.Pow(1+float64(growth)/100, math.Floor(max(days, 0)))
+	return int(min(l, float64(daily)))
+}
+
+// effectiveDailyLimit applies the plan's per-number cap and the number's own
+// limit (Numbers → settings) on top of the warm-up quota.
 func (s *Session) effectiveDailyLimit(ctx context.Context, pairedAt int64) int {
 	l := s.dailyLimit(pairedAt)
 	if p := s.m.lic.planDailyLimit(ctx, s.owner()); p > 0 && p < l {
 		l = p
 	}
-	return l
+	if own := s.settings(ctx).DailyLimit; own > 0 && own < l {
+		l = own
+	}
+	return max(l, 1)
+}
+
+// quotaInfo explains the current allowance of a number (for the UI).
+func (s *Session) quotaInfo(ctx context.Context, r sessionRow) map[string]any {
+	a := s.m.adminPacing(ctx)
+	start, growth, daily, newC := a.quota(s.m.cfg)
+	now := time.Now()
+	warm := quotaFor(a, s.m.cfg, r.pairedAt, now)
+	eff := s.effectiveDailyLimit(ctx, r.pairedAt)
+	sent, _ := countSentSince(ctx, s.m.db, s.name, dayStart(now), false)
+	newSent, _ := countSentSince(ctx, s.m.db, s.name, dayStart(now), true)
+	day := 0
+	if r.pairedAt > 0 {
+		day = int(now.Sub(time.Unix(r.pairedAt, 0)).Hours()/24) + 1
+	}
+	out := map[string]any{"day": day, "warmup_start": start, "growth_pct": growth, "ceiling": daily, "warmup_limit": warm, "effective_limit": eff,
+		"sent_today": sent, "new_contacts_today": newSent, "new_contact_limit": newC, "plan_limit": s.m.lic.planDailyLimit(ctx, s.owner()), "own_limit": s.settings(ctx).DailyLimit}
+	if warm < daily && start > 0 && r.pairedAt > 0 {
+		out["tomorrow"] = quotaFor(a, s.m.cfg, r.pairedAt, now.Add(24*time.Hour))
+		daysLeft := math.Ceil(math.Log(float64(daily)/float64(start))/math.Log(1+float64(growth)/100)) - float64(day-1)
+		out["full_in_days"] = int(max(daysLeft, 0))
+	}
+	return out
 }
 
 func (s *Session) timelocked(r sessionRow) bool {
@@ -137,7 +170,7 @@ func (s *Session) checkLimits(ctx context.Context, r sessionRow, newContact, slo
 		if err != nil {
 			return err
 		}
-		limit := s.m.cfg.NewContactLimit
+		_, _, _, limit := s.m.adminPacing(ctx).quota(s.m.cfg)
 		if slow {
 			limit = max(limit/2, 1)
 		}

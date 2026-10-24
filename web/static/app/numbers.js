@@ -58,8 +58,10 @@ export async function render(ctx) {
         ${linked && h.state ? html`<div class="note ${healthTone}">${ic('heart', 16)}<span><b>${healthLabel}</b> · ${t('fail rate')} ${Math.round((h.fail_rate || 0) * 100)}% · ${t('reply rate')} ${Math.round((h.reply_rate || 0) * 1000) / 10}%${h.reason ? html`<br>${h.reason}` : ''}</span></div>` : ''}
       </div>
       <div class="num-meta">
-        <span>${ic('globe', 14)}<span class="ellipsis">${s.proxy ? t('Proxy') + ': ' + s.proxy : t('No proxy — uses the server IP')}</span></span>
+        <span>${ic('globe', 14)}<span class="ellipsis">${s.proxy_label ? t('Proxy') + ': ' + s.proxy_label : s.proxy ? t('Proxy') + ': ' + s.proxy : t('No proxy — uses the server IP')}</span></span>
         ${s.linked_at ? html`<span>${ic('link', 14)}${t('Linked')} ${fmtDate(s.linked_at, false)}</span>` : ''}
+        ${s.quota && s.quota.warmup_limit < s.quota.ceiling ? html`<span>${ic('chart', 14)}${t('Warm-up day {d}: {n} today, {m} tomorrow, full {c} in {k} days', { d: s.quota.day, n: fmtNum(s.quota.warmup_limit), m: fmtNum(s.quota.tomorrow), c: fmtNum(s.quota.ceiling), k: s.quota.full_in_days })}</span>` : ''}
+        ${s.quota && s.quota.own_limit ? html`<span>${ic('shield', 14)}${t('Own cap {n} / day', { n: fmtNum(s.quota.own_limit) })}</span>` : ''}
       </div>
       <div class="num-actions">
         ${!linked || ['qr', 'qr_expired', 'logged_out', 'new'].includes(s.status) ? html`<button class="btn sm primary" data-a="link">${ic('qr', 15)}${t('Link')}</button>` : ''}
@@ -187,16 +189,25 @@ export function linkModal(s, onDone) {
   start();
 }
 
-function proxyModal(s, reload) {
+async function proxyModal(s, reload) {
+  const pool = await api('GET', '/api/proxies', undefined, { silent: true });
+  const list = pool.ok ? pool.proxies || [] : [], ownAllowed = !pool.ok || pool.own_allowed !== false;
+  const cur = s.proxy_id ? 'pool:' + s.proxy_id : s.proxy ? 'own' : 'none';
   const m = modal({ title: t('Proxy for {n}', { n: sessionName(s) }), body: html`<form data-f class="stack">
     <p class="lead">${t('A proxy gives this number its own IP address. Use a residential or mobile proxy from the same country as the number.')}</p>
-    <label class="field"><span>${t('Proxy URL')}</span><input name="proxy" type="text" placeholder="socks5://user:pass@host:1080" value="${s.proxy || ''}" autocomplete="off"></label>
-    <p class="hint">${t('Formats: socks5://user:pass@host:port or http://host:port. Leave empty and save to remove.')}</p>
+    <div class="stack" style="gap:6px">
+      <label class="choice"><input type="radio" name="mode" value="none" ${cur === 'none' ? 'checked' : ''}><b>${t('No proxy')}</b><small>${t('Uses the server IP (shared by every number on this server).')}</small></label>
+      ${list.map((p) => html`<label class="choice"><input type="radio" name="mode" value="pool:${p.id}" ${cur === 'pool:' + p.id ? 'checked' : ''}><b>${ic('globe', 14)} ${p.label}</b><small>${p.kind === 'shared' ? t('shared pool proxy') : t('your dedicated proxy')}${p.country ? ' · ' + p.country : ''} · ${t('{n} numbers on it', { n: p.in_use })}</small></label>`)}
+      ${ownAllowed ? html`<label class="choice"><input type="radio" name="mode" value="own" ${cur === 'own' ? 'checked' : ''}><b>${t('My own proxy URL')}</b><small>${t('socks5://user:pass@host:port or http://host:port')}</small></label>` : ''}</div>
+    ${ownAllowed ? html`<label class="field" data-own ${cur === 'own' ? '' : 'hidden'}><span>${t('Proxy URL')}</span><input name="proxy" type="text" placeholder="socks5://user:pass@host:1080" value="${s.proxy_id ? '' : s.proxy || ''}" autocomplete="off"></label>` : ''}
+    ${!list.length && !ownAllowed ? html`<p class="hint">${t('Ask your administrator to allocate a proxy from the pool.')}</p>` : ''}
+    <p class="hint">${t('Only this number’s connection to WhatsApp goes through the proxy; your phone is not affected. The number reconnects when you save.')}</p>
     <div data-result></div></form>`,
-  footer: html`<button class="btn ghost" data-close>${t('Cancel')}</button><button class="btn" data-test>${ic('globe', 16)}${t('Test proxy')}</button><button class="btn primary" data-save>${t('Save proxy')}</button>` });
+  footer: html`<button class="btn ghost" data-close>${t('Cancel')}</button>${ownAllowed ? html`<button class="btn" data-test>${ic('globe', 16)}${t('Test URL')}</button>` : ''}<button class="btn primary" data-save>${t('Save')}</button>` });
   const f = m.body.querySelector('form'), res = m.body.querySelector('[data-result]');
   f.addEventListener('submit', (e) => e.preventDefault());
-  m.foot.querySelector('[data-test]').addEventListener('click', async (e) => {
+  f.addEventListener('change', () => { const own = m.body.querySelector('[data-own]'); if (own) own.hidden = f.mode.value !== 'own'; });
+  m.foot.querySelector('[data-test]')?.addEventListener('click', async (e) => {
     const b = e.currentTarget; b.classList.add('busy');
     const j = await api('POST', `/api/sessions/${enc(s.name)}/proxy-test`, { proxy: f.proxy.value.trim() });
     b.classList.remove('busy');
@@ -205,13 +216,15 @@ function proxyModal(s, reload) {
       : html`<div class="note bad">${ic('alert', 16)}<span>${j.error || t('Proxy test failed')}</span></div>`.s;
   });
   m.foot.querySelector('[data-save]').addEventListener('click', async () => {
-    const j = await api('PATCH', `/api/sessions/${enc(s.name)}`, { proxy: f.proxy.value.trim() });
-    if (j.ok) { toast(f.proxy.value.trim() ? t('Proxy saved. The number reconnects through it.') : t('Proxy removed')); m.close(); reload(); }
+    const mode = f.mode.value;
+    const body = mode === 'own' ? { proxy: f.proxy.value.trim() } : { proxy_id: mode.startsWith('pool:') ? +mode.slice(5) : 0 };
+    const j = await api('PATCH', `/api/sessions/${enc(s.name)}`, body);
+    if (j.ok) { toast(mode === 'none' ? t('Proxy removed') : t('Proxy saved. The number reconnects through it.')); m.close(); reload(); }
   });
 }
 
 function settingsModal(s, reload) {
-  const c = { reject_calls: false, reject_message: '', ignore_groups: false, ignore_channels: true, auto_save_contacts: true, always_online: false, takeover_minutes: 30, ...(s.settings || {}) };
+  const c = { reject_calls: false, reject_message: '', ignore_groups: false, ignore_channels: true, auto_save_contacts: true, always_online: false, takeover_minutes: 30, daily_limit: 0, ...(s.settings || {}) };
   const m = modal({ title: t('Number settings · {n}', { n: sessionName(s) }), side: true, body: html`<form data-f class="stack" style="gap:6px">
     <fieldset class="panel panel-pad"><legend>${t('Calls')}</legend>
       ${toggle('reject_calls', c.reject_calls, t('Reject incoming calls'), t('The caller gets the message below.'))}
@@ -223,11 +236,15 @@ function settingsModal(s, reload) {
     <fieldset class="panel panel-pad"><legend>${t('Presence')}</legend>
       ${toggle('always_online', c.always_online, t('Always show as online'), t('Your phone may stop getting notifications while this is on.'))}
       <label class="field mt-s"><span>${t('Human takeover (minutes)')}</span><input name="takeover_minutes" type="number" min="0" max="1440" value="${c.takeover_minutes}">
-        <small>${t('When you reply from the phone, auto-replies pause in that chat for this long.')}</small></label></fieldset></form>`,
+        <small>${t('When you reply from the phone, auto-replies pause in that chat for this long.')}</small></label></fieldset>
+    <fieldset class="panel panel-pad"><legend>${t('Quota')}</legend>
+      <label class="field"><span>${t('My own daily cap for this number')}</span><input name="daily_limit" type="number" min="0" max="20000" value="${c.daily_limit || 0}">
+        <small>${t('0 = no extra cap. Can only lower the allowance the warm-up and your plan give (today: {n}).', { n: fmtNum(s.quota?.effective_limit || s.today?.limit || 0) })}</small></label></fieldset></form>`,
   footer: html`<button class="btn ghost" data-close>${t('Cancel')}</button><button class="btn primary" data-save>${t('Save settings')}</button>` });
   m.foot.querySelector('[data-save]').addEventListener('click', async () => {
     const d = formData(m.body.querySelector('form'));
     d.takeover_minutes = Number(d.takeover_minutes) || 0;
+    d.daily_limit = Number(d.daily_limit) || 0;
     const j = await api('PATCH', `/api/sessions/${enc(s.name)}`, { settings: d });
     if (j.ok) { toast(t('Settings saved')); m.close(); reload(); }
   });

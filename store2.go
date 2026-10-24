@@ -459,6 +459,19 @@ CREATE TABLE IF NOT EXISTS flow_log (
 	at       INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS flow_log_flow ON flow_log(flow_id, id);
+CREATE TABLE IF NOT EXISTS proxies (
+	id          INTEGER PRIMARY KEY AUTOINCREMENT,
+	label       TEXT NOT NULL,
+	url         TEXT NOT NULL,
+	kind        TEXT NOT NULL DEFAULT 'shared',   -- shared, dedicated
+	assigned_to INTEGER NOT NULL DEFAULT 0,
+	country     TEXT NOT NULL DEFAULT '',
+	note        TEXT NOT NULL DEFAULT '',
+	active      INTEGER NOT NULL DEFAULT 1,
+	last_test   INTEGER NOT NULL DEFAULT 0,
+	last_result TEXT NOT NULL DEFAULT '',
+	created_at  INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS form_entries (
 	id         INTEGER PRIMARY KEY AUTOINCREMENT,
 	owner_id   INTEGER NOT NULL,
@@ -490,6 +503,7 @@ func migrate2(db *sql.DB) error {
 		{"campaigns", "gap_min", "INTEGER NOT NULL DEFAULT 0"},
 		{"campaigns", "gap_max", "INTEGER NOT NULL DEFAULT 0"},
 		{"autoreplies", "source", "TEXT NOT NULL DEFAULT 'manual'"},
+		{"gw_sessions", "proxy_id", "INTEGER NOT NULL DEFAULT 0"},
 	}
 	for _, a := range adds {
 		if err := addColumn(db, a.table, a.col, a.def); err != nil {

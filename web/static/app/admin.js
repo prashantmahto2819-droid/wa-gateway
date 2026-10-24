@@ -1,12 +1,12 @@
 import { api, html, raw, ic, t, fmtNum, fmtDate, relTime, pill, skel, empty, modal, confirmBox, promptBox, toast, copy, formData, toggle, debounce, $$ } from '/static/app/core.js';
 import { FEATURES, planLimits } from '/static/app/licence.js';
 
-const TITLES = { overview: 'Admin overview', users: 'Users', plans: 'Plans', licences: 'Licences', activations: 'Activations', settings: 'Site settings', inbox: 'Inbox', server: 'Licence server', audit: 'Audit log' };
+const TITLES = { overview: 'Admin overview', users: 'Users', plans: 'Plans', licences: 'Licences', activations: 'Activations', settings: 'Site settings', inbox: 'Inbox', server: 'Licence server', audit: 'Audit log', proxies: 'Proxy pool' };
 
 export async function render(ctx) {
   const v = ctx.params.view || 'overview';
   ctx.setTitle(t(TITLES[v]), html`<a href="/app/admin" data-link>${t('Admin')}</a> ${ic('chevron', 14)} <span>${t(TITLES[v])}</span>`);
-  const fn = { overview, users, plans, licences, activations, settings, inbox, server, audit }[v];
+  const fn = { overview, users, plans, licences, activations, settings, inbox, server, audit, proxies }[v];
   ctx.root.innerHTML = html`<div class="page"><div class="page-head"><div><h1>${t(TITLES[v])}</h1><p data-sub></p></div><div class="page-actions" data-actions></div></div><div data-body>${skel(6)}</div></div>`.s;
   await fn(ctx, ctx.root.querySelector('[data-body]'), ctx.root.querySelector('[data-actions]'), ctx.root.querySelector('[data-sub]'));
 }
@@ -292,4 +292,51 @@ async function audit(ctx, body, actions, sub) {
   };
   actions.querySelector('[data-q]').addEventListener('input', debounce((e) => draw(e.target.value.toLowerCase()), 200));
   draw();
+}
+
+// ------------------------------------------------------------------ proxy pool
+async function proxies(ctx, body, actions, sub) {
+  sub.textContent = t('Proxies you bought, and who may use them. Only the gateway’s WhatsApp connection for a number goes through a proxy — the phone is not affected.');
+  actions.innerHTML = html`<button class="btn primary" data-a="new">${ic('plus', 16)}${t('Add proxy')}</button>`.s;
+  let data = null, users = [];
+  async function load() {
+    const [j, u] = await Promise.all([api('GET', '/api/admin/proxies'), api('GET', '/api/admin/users?limit=500', undefined, { silent: true })]);
+    if (!ctx.isCurrent() || !j.ok) return;
+    data = j; users = u.users || [];
+    const by = {}; (j.usage || []).forEach((x) => { (by[x.proxy_id] = by[x.proxy_id] || []).push(x); });
+    body.innerHTML = html`<section class="panel"><div class="panel-body">${toggle('own_allowed', !!j.own_allowed, t('Users may also enter their own proxy URL on a number'), t('Off = numbers can only use proxies from this pool.'))}</div></section>
+      <section class="panel mt">${j.proxies.length ? html`<ul class="list">${j.proxies.map((p) => html`<li><span class="list-ico">${ic('globe')}</span>
+          <span class="li-main"><b>${p.label}</b><small><code>${p.masked}</code>${p.country ? ' · ' + p.country : ''} · ${p.kind === 'shared' ? t('shared with everyone') : t('dedicated to {e}', { e: p.assigned_email || '#' + p.assigned_to })} · ${t('{n} numbers', { n: p.in_use })}${p.last_test ? ' · ' + t('tested {t}', { t: relTime(p.last_test) }) + ': ' + p.last_result : ''}${(by[p.id] || []).length ? html`<br>${(by[p.id] || []).map((x) => (x.label || x.session) + ' (' + x.email + ')').join(', ')}` : ''}</small></span>
+          ${pill(p.active ? t('on') : t('off'), p.active ? 'ok' : 'muted')}<button class="btn sm" data-test="${p.id}">${t('Test')}</button><button class="btn sm" data-edit="${p.id}">${ic('edit', 14)}${t('Edit')}</button><button class="btn-icon danger" data-del="${p.id}" aria-label="${t('Delete')}">${ic('trash', 16)}</button></li>`)}</ul>`
+        : html`<div class="panel-body">${empty('globe', t('No proxies in the pool'), t('Add proxies from your provider (socks5://user:pass@host:port). Mark each as shared, or dedicate it to one user; users then pick a proxy for a number without seeing the password.'))}</div>`}</section>`.s;
+  }
+  function editModal(p) {
+    const isNew = !p;
+    p = p || { label: '', kind: 'shared', assigned_to: 0, country: '', note: '', active: true };
+    const m = modal({ title: isNew ? t('Add proxy') : p.label, body: html`<form class="stack">
+        <div class="form-grid g2"><label class="field"><span>${t('Label')}</span><input name="label" value="${p.label}" placeholder="${t('Mumbai mobile 1')}"></label><label class="field"><span>${t('Country')}</span><input name="country" value="${p.country}" placeholder="IN"></label></div>
+        <label class="field"><span>${t('Proxy URL')} ${isNew ? '' : html`<small>(${t('leave blank to keep the current one')})</small>`}</span><input name="url" placeholder="socks5://user:pass@host:1080" autocomplete="off"></label>
+        <div class="form-grid g2"><label class="field"><span>${t('Who may use it')}</span><select name="kind"><option value="shared" ${p.kind === 'shared' ? 'selected' : ''}>${t('Shared — every user')}</option><option value="dedicated" ${p.kind === 'dedicated' ? 'selected' : ''}>${t('Dedicated — one user')}</option></select></label>
+          <label class="field"><span>${t('Dedicated to')}</span><select name="assigned_to"><option value="0">—</option>${users.map((u) => html`<option value="${u.id}" ${u.id === p.assigned_to ? 'selected' : ''}>${u.name || u.email} (${u.email})</option>`)}</select></label></div>
+        <label class="field"><span>${t('Note')}</span><input name="note" value="${p.note || ''}" placeholder="${t('provider, expiry, price')}"></label>
+        ${toggle('active', p.active, t('Active'), '')}</form>`,
+      footer: html`<button class="btn ghost" data-close>${t('Cancel')}</button><button class="btn primary" data-ok>${t('Save')}</button>` });
+    m.foot.querySelector('[data-ok]').addEventListener('click', async () => {
+      const f = m.body.querySelector('form');
+      const d = { label: f.label.value.trim(), country: f.country.value.trim(), kind: f.kind.value, assigned_to: +f.assigned_to.value || 0, note: f.note.value, active: f.active.checked };
+      if (f.url.value.trim()) d.url = f.url.value.trim();
+      const j = await api(isNew ? 'POST' : 'PATCH', isNew ? '/api/admin/proxies' : '/api/admin/proxies/' + p.id, d);
+      if (j.ok) { m.close(); toast(t('Saved')); load(); }
+    });
+  }
+  ctx.root.addEventListener('click', async (e) => {
+    if (e.target.closest('[data-a="new"]')) return editModal();
+    const ed = e.target.closest('[data-edit]'); if (ed) return editModal(data.proxies.find((p) => p.id === +ed.dataset.edit));
+    const ts = e.target.closest('[data-test]');
+    if (ts) { ts.classList.add('busy'); const j = await api('POST', `/api/admin/proxies/${ts.dataset.test}/test`); ts.classList.remove('busy'); if (j.ok) toast(t('Works: {ip} {c}', { ip: j.result.ip, c: j.result.country || '' })); load(); return; }
+    const del = e.target.closest('[data-del]');
+    if (del && await confirmBox(t('Delete this proxy? Numbers using it go back to the server IP.'), { danger: true, okText: t('Delete') })) { if ((await api('DELETE', '/api/admin/proxies/' + del.dataset.del)).ok) load(); }
+  });
+  body.addEventListener('change', async (e) => { if (e.target.name === 'own_allowed') { if ((await api('POST', '/api/admin/proxies/settings', { own_allowed: e.target.checked })).ok) toast(t('Saved')); } });
+  load();
 }

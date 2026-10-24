@@ -37,6 +37,11 @@ type AdminPacing struct {
 	FloorAPIGap    int  `json:"floor_api_gap"`    // nobody's API gap may be lower (seconds)
 	UsersCanChange bool `json:"users_can_change"` // users may set their own (slower) pace
 	StatusMax      int  `json:"status_max"`       // most people one Status goes to (0 = .env STATUS_MAX_RECIPIENTS)
+	// Quota engine: how a number's daily allowance grows after linking.
+	WarmupStart     int `json:"warmup_start"`      // day-1 allowance (0 = .env WARMUP_START)
+	WarmupGrowthPct int `json:"warmup_growth_pct"` // growth per day in percent (0 = 60)
+	DailyLimit      int `json:"daily_limit"`       // ceiling per number per day (0 = .env DAILY_LIMIT)
+	NewContactLimit int `json:"new_contact_limit"` // first-time contacts per number per day (0 = .env)
 }
 
 func boolp(b bool) *bool { return &b }
@@ -51,7 +56,26 @@ func envPacing(cfg *Config) AdminPacing {
 			Typing: boolp(cfg.Typing), ReplyTyping: boolp(true), ReplyDelayMin: 2, ReplyDelayMax: 6,
 		},
 		FloorGap: 8, FloorAPIGap: 1, UsersCanChange: true,
+		WarmupStart: cfg.WarmupStart, WarmupGrowthPct: 60, DailyLimit: cfg.DailyLimit, NewContactLimit: cfg.NewContactLimit,
 	}
+}
+
+// quota is the admin's quota settings with .env fallbacks applied.
+func (a AdminPacing) quota(cfg *Config) (start, growthPct, daily, newContacts int) {
+	start, growthPct, daily, newContacts = a.WarmupStart, a.WarmupGrowthPct, a.DailyLimit, a.NewContactLimit
+	if start < 0 {
+		start = 0
+	}
+	if growthPct <= 0 {
+		growthPct = 60
+	}
+	if daily <= 0 {
+		daily = cfg.DailyLimit
+	}
+	if newContacts <= 0 {
+		newContacts = cfg.NewContactLimit
+	}
+	return
 }
 
 // overlay copies the fields that are set in o over p.
@@ -123,6 +147,7 @@ func (m *Manager) adminPacing(ctx context.Context) AdminPacing {
 		if json.Unmarshal([]byte(raw), &saved) == nil {
 			a.Pacing = a.Pacing.overlay(saved.Pacing)
 			a.FloorGap, a.FloorAPIGap, a.UsersCanChange, a.StatusMax = saved.FloorGap, saved.FloorAPIGap, saved.UsersCanChange, saved.StatusMax
+			a.WarmupStart, a.WarmupGrowthPct, a.DailyLimit, a.NewContactLimit = saved.WarmupStart, saved.WarmupGrowthPct, saved.DailyLimit, saved.NewContactLimit
 		}
 	}
 	a.Pacing = a.Pacing.clamp(a)
@@ -185,6 +210,10 @@ func (a *API) saveAdminPacing(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.FloorGap < 1 || body.FloorAPIGap < 0 {
 		writeErr(w, http.StatusBadRequest, "bad_request", errors.New("floor_gap must be at least 1 second"))
+		return
+	}
+	if body.WarmupStart < 0 || body.WarmupStart > 5000 || body.WarmupGrowthPct < 0 || body.WarmupGrowthPct > 500 || body.DailyLimit < 0 || body.DailyLimit > 20000 || body.NewContactLimit < 0 || body.NewContactLimit > 5000 {
+		writeErr(w, http.StatusBadRequest, "bad_request", errors.New("quota: warm-up start 0-5000, growth 0-500 %, daily limit 0-20000, new contacts 0-5000"))
 		return
 	}
 	body.Pacing = envPacing(a.cfg).Pacing.overlay(body.Pacing).clamp(body)
