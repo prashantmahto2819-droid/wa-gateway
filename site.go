@@ -2,13 +2,16 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"html/template"
 	"io/fs"
 	"math"
 	"net/http"
+	gopath "path"
 	"strconv"
 	"strings"
 	"sync"
@@ -200,14 +203,40 @@ func (a *API) appShell(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "dashboard missing", http.StatusInternalServerError)
 		return
 	}
+	html := strings.NewReplacer(
+		`"/static/app.css"`, `"/static/app.css?v=`+buildStamp+`"`,
+		`"/static/app/theme-boot.js"`, `"/static/app/theme-boot.js?v=`+buildStamp+`"`,
+		`"/static/app.js"`, `"/static/app.js?v=`+buildStamp+`"`,
+	).Replace(string(b))
 	setPageHeaders(w)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write(b)
+	_, _ = w.Write([]byte(html))
 }
 
 func urlQueryEscape(s string) string {
 	return strings.NewReplacer("%", "%25", "&", "%26", "?", "%3F", "#", "%23", " ", "%20").Replace(s)
 }
+
+// buildStamp fingerprints every dashboard file that ships inside the binary.
+// It changes with each update, so a browser can never mix a new app.js with a
+// page module it cached before the update (that used to show "fn is not a
+// function" on a page added by the update).
+var buildStamp = func() string {
+	h := sha256.New()
+	_ = fs.WalkDir(webFS, "web/static", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		b, err := webFS.ReadFile(p)
+		if err != nil {
+			return nil
+		}
+		h.Write([]byte(p))
+		h.Write(b)
+		return nil
+	})
+	return hex.EncodeToString(h.Sum(nil))[:12]
+}()
 
 func staticHandler() http.Handler {
 	sub, err := fs.Sub(webFS, "web/static")
@@ -216,8 +245,18 @@ func staticHandler() http.Handler {
 	}
 	fileServer := http.FileServer(http.FS(sub))
 	return http.StripPrefix("/static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "public, max-age=3600")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		switch ext := strings.ToLower(gopath.Ext(r.URL.Path)); {
+		case r.URL.Query().Get("v") == buildStamp:
+			// The address carries this build's stamp, so it can be kept forever.
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		case ext == ".js" || ext == ".css" || ext == ".json":
+			// Code: ask the browser to check back. Unchanged files answer 304.
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("ETag", `"`+buildStamp+`"`)
+		default:
+			w.Header().Set("Cache-Control", "public, max-age=86400")
+		}
 		fileServer.ServeHTTP(w, r)
 	}))
 }

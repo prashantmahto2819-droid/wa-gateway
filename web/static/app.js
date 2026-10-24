@@ -2,6 +2,10 @@
 import { api, html, raw, esc, ic, icon, t, $, $$, toast, getLang, reduced } from '/static/app/core.js';
 import { setLang, onLangChange } from '/static/i18n.js';
 
+// The server serves this file as app.js?v=<build>, so every page module is
+// asked for with the same stamp — a browser can never mix old and new code.
+const BUILD = new URL(import.meta.url).search;
+
 const ROUTES = [
   { re: /^\/app\/?$/, mod: 'overview', nav: 'overview' },
   { re: /^\/app\/numbers\/?$/, mod: 'numbers', nav: 'numbers' },
@@ -214,7 +218,7 @@ async function route() {
   params.view ||= match.view;
   view.innerHTML = '<div class="page"><div class="skel-wrap"><div class="skel h1"></div><div class="skel"></div><div class="skel"></div></div></div>';
   let mod;
-  try { mod = await import(`/static/app/${match.mod}.js`); } catch (e) {
+  try { mod = await import(`/static/app/${match.mod}.js${BUILD}`); } catch (e) {
     console.error(e);
     view.innerHTML = html`<div class="page">${t('Could not load this page. Reload and try again.')}</div>`.s;
     return;
