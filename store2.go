@@ -385,6 +385,43 @@ CREATE TABLE IF NOT EXISTS task_log (
 	title    TEXT NOT NULL,
 	at       INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS websites (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	owner_id   INTEGER NOT NULL,
+	name       TEXT NOT NULL,
+	url        TEXT NOT NULL DEFAULT '',
+	key        TEXT NOT NULL UNIQUE,
+	secret     TEXT NOT NULL,
+	text       TEXT NOT NULL DEFAULT '',
+	routes     TEXT NOT NULL DEFAULT '[]',
+	active     INTEGER NOT NULL DEFAULT 1,
+	received   INTEGER NOT NULL DEFAULT 0,
+	last_seen  INTEGER NOT NULL DEFAULT 0,
+	created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS posts (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	owner_id   INTEGER NOT NULL,
+	website_id INTEGER NOT NULL DEFAULT 0,
+	ext_id     TEXT NOT NULL DEFAULT '',
+	event      TEXT NOT NULL DEFAULT '',
+	title      TEXT NOT NULL DEFAULT '',
+	summary    TEXT NOT NULL DEFAULT '',
+	text       TEXT NOT NULL DEFAULT '',
+	url        TEXT NOT NULL DEFAULT '',
+	image      TEXT NOT NULL DEFAULT '',
+	category   TEXT NOT NULL DEFAULT '',
+	session    TEXT NOT NULL DEFAULT '',
+	targets    TEXT NOT NULL DEFAULT '[]',
+	status     TEXT NOT NULL DEFAULT 'pending',  -- pending, queued, rejected
+	source     TEXT NOT NULL DEFAULT 'manual',   -- website, manual
+	note       TEXT NOT NULL DEFAULT '',
+	created_at INTEGER NOT NULL,
+	decided_at INTEGER NOT NULL DEFAULT 0,
+	decided_by INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS posts_owner ON posts(owner_id, status, id);
+CREATE UNIQUE INDEX IF NOT EXISTS posts_ext ON posts(website_id, ext_id) WHERE ext_id<>'';
 CREATE TABLE IF NOT EXISTS form_entries (
 	id         INTEGER PRIMARY KEY AUTOINCREMENT,
 	owner_id   INTEGER NOT NULL,
