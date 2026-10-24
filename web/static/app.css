@@ -800,3 +800,6 @@ dl.kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .chat .bubble.me { margin-left: auto; padding-bottom: 8px; }
 .chat .bubble.sys { background: transparent; box-shadow: none; color: var(--muted); font-size: 12.5px; text-align: center; margin: 4px auto; max-width: 100%; }
 .mb-s { margin-bottom: var(--s2); }
+/* long code blocks never widen the page on phones */
+.stack > .panel, .page .panel, .panel-body > div { min-width: 0; }
+.codeblock { max-width: 100%; }
