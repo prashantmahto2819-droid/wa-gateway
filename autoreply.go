@@ -43,16 +43,17 @@ type AutoReply struct {
 	Active      bool        `json:"active"`
 	Priority    int         `json:"priority"`
 	Hits        int         `json:"hits"`
+	Source      string      `json:"source"` // manual, kit
 	CreatedAt   int64       `json:"created_at"`
 }
 
-const arCols = `id, name, session, trigger_type, keywords, reply, ai, ai_prompt, only_dm, cooldown_min, hours, active, priority, hits, created_at`
+const arCols = `id, name, session, trigger_type, keywords, reply, ai, ai_prompt, only_dm, cooldown_min, hours, active, priority, hits, source, created_at`
 
 func scanAR(row interface{ Scan(...any) error }) (*AutoReply, error) {
 	var r AutoReply
 	var kw, reply, hours string
 	var ai, dm, active int
-	if err := row.Scan(&r.ID, &r.Name, &r.Session, &r.Trigger, &kw, &reply, &ai, &r.AIPrompt, &dm, &r.CooldownMin, &hours, &active, &r.Priority, &r.Hits, &r.CreatedAt); err != nil {
+	if err := row.Scan(&r.ID, &r.Name, &r.Session, &r.Trigger, &kw, &reply, &ai, &r.AIPrompt, &dm, &r.CooldownMin, &hours, &active, &r.Priority, &r.Hits, &r.Source, &r.CreatedAt); err != nil {
 		return nil, err
 	}
 	r.Keywords = fromJSON[[]string](kw)

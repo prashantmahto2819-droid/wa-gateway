@@ -635,6 +635,9 @@ func (s *Session) onMessage(ctx context.Context, e *events.Message) {
 
 	if !info.IsFromMe && fresh && !e.IsEdit && content["type"] != "reaction" {
 		go s.runAutoReplies(chatPN, info.IsGroup, firstTime, text, choice, info.PushName, info.ID, sender)
+		if isDM {
+			go s.m.stopRunsOnReply(context.WithoutCancel(ctx), s.owner(), phoneOf(chatPN))
+		}
 	}
 }
 

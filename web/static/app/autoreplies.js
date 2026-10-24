@@ -34,7 +34,7 @@ export async function render(ctx) {
     if (!list.length) { box.innerHTML = empty('bot', t('No auto-replies yet'), t('Start with a welcome message and an away message for nights and Sundays.'), html`<button class="btn primary" data-a="new">${ic('plus', 16)}${t('New rule')}</button>`).s; return; }
     box.innerHTML = html`<div data-rules>${list.map((r, i) => html`<div class="rule-card" draggable="true" data-id="${r.id}">
       <div class="prio"><button class="btn-icon" data-move="-1" data-i="${i}" aria-label="${t('Move up')}" ${i === 0 ? 'disabled' : ''}>${ic('up', 16)}</button><span class="cell-sub" title="${t('Drag to reorder')}">${ic('grip', 16)}</span><button class="btn-icon" data-move="1" data-i="${i}" aria-label="${t('Move down')}" ${i === list.length - 1 ? 'disabled' : ''}>${ic('down', 16)}</button></div>
-      <div style="min-width:0"><b>${r.name || t(TL[r.trigger] || r.trigger)}</b>
+      <div style="min-width:0"><b>${r.name || t(TL[r.trigger] || r.trigger)}</b>${r.source === 'kit' ? pill(t('kit'), 'muted') : ''}
         <div class="cell-sub ellipsis">${r.ai ? '✨ ' + t('AI reply') + ' — ' + (r.ai_prompt || '').slice(0, 80) : summarize(r.reply)}</div>
         <div class="rule-meta">${pill(t(TL[r.trigger] || r.trigger), 'info', false)}${(r.keywords || []).slice(0, 4).map((k) => html`<span class="tag">${k}</span>`)}
           <span class="pill">${r.session ? sessionName(sessions.find((s) => s.name === r.session) || { name: r.session }) : t('All numbers')}</span>

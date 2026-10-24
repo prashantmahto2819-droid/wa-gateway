@@ -269,6 +269,134 @@ CREATE TABLE IF NOT EXISTS stats_daily (
 	received INTEGER NOT NULL DEFAULT 0,
 	PRIMARY KEY (session, day)
 );
+CREATE TABLE IF NOT EXISTS business (
+	owner_id   INTEGER PRIMARY KEY,
+	kit        TEXT NOT NULL DEFAULT '',
+	subs       TEXT NOT NULL DEFAULT '[]',
+	name       TEXT NOT NULL DEFAULT '',
+	phone      TEXT NOT NULL DEFAULT '',
+	city       TEXT NOT NULL DEFAULT '',
+	code       TEXT NOT NULL DEFAULT '',
+	fields     TEXT NOT NULL DEFAULT '[]',
+	forms      TEXT NOT NULL DEFAULT '[]',
+	stages     TEXT NOT NULL DEFAULT '{}',
+	applied_at INTEGER NOT NULL DEFAULT 0,
+	updated_at INTEGER NOT NULL DEFAULT 0
+);
+CREATE UNIQUE INDEX IF NOT EXISTS business_code ON business(code);
+CREATE TABLE IF NOT EXISTS sequences (
+	id            INTEGER PRIMARY KEY AUTOINCREMENT,
+	owner_id      INTEGER NOT NULL,
+	key           TEXT NOT NULL DEFAULT '',
+	name          TEXT NOT NULL,
+	trigger_type  TEXT NOT NULL DEFAULT 'manual',
+	trigger_value TEXT NOT NULL DEFAULT '',
+	business_days INTEGER NOT NULL DEFAULT 0,
+	stop_on_reply INTEGER NOT NULL DEFAULT 0,
+	steps         TEXT NOT NULL DEFAULT '[]',
+	session       TEXT NOT NULL DEFAULT '',
+	active        INTEGER NOT NULL DEFAULT 1,
+	source        TEXT NOT NULL DEFAULT 'manual',
+	created_at    INTEGER NOT NULL,
+	updated_at    INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sequences_owner ON sequences(owner_id);
+CREATE TABLE IF NOT EXISTS sequence_runs (
+	id          INTEGER PRIMARY KEY AUTOINCREMENT,
+	owner_id    INTEGER NOT NULL,
+	sequence_id INTEGER NOT NULL,
+	contact_id  INTEGER NOT NULL DEFAULT 0,
+	phone       TEXT NOT NULL,
+	name        TEXT NOT NULL DEFAULT '',
+	step        INTEGER NOT NULL DEFAULT 0,
+	next_at     INTEGER NOT NULL DEFAULT 0,
+	status      TEXT NOT NULL DEFAULT 'active',   -- active, done, stopped, replied
+	vars        TEXT NOT NULL DEFAULT '{}',
+	started_at  INTEGER NOT NULL,
+	updated_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sequence_runs_due ON sequence_runs(status, next_at);
+CREATE INDEX IF NOT EXISTS sequence_runs_owner ON sequence_runs(owner_id, status);
+CREATE TABLE IF NOT EXISTS sequence_log (
+	id     INTEGER PRIMARY KEY AUTOINCREMENT,
+	run_id INTEGER NOT NULL,
+	step   INTEGER NOT NULL,
+	action TEXT NOT NULL,
+	title  TEXT NOT NULL DEFAULT '',
+	note   TEXT NOT NULL DEFAULT '',
+	at     INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sequence_log_run ON sequence_log(run_id);
+CREATE TABLE IF NOT EXISTS renewal_types (
+	id            INTEGER PRIMARY KEY AUTOINCREMENT,
+	owner_id      INTEGER NOT NULL,
+	key           TEXT NOT NULL DEFAULT '',
+	label         TEXT NOT NULL,
+	icon          TEXT NOT NULL DEFAULT '',
+	frequency     TEXT NOT NULL DEFAULT 'yearly',
+	remind_before TEXT NOT NULL DEFAULT '[]',
+	remind_after  TEXT NOT NULL DEFAULT '[]',
+	staff_task    INTEGER NOT NULL DEFAULT 0,
+	fields        TEXT NOT NULL DEFAULT '[]',
+	message       TEXT NOT NULL DEFAULT '',
+	session       TEXT NOT NULL DEFAULT '',
+	source        TEXT NOT NULL DEFAULT 'manual',
+	created_at    INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS renewal_types_owner ON renewal_types(owner_id);
+CREATE TABLE IF NOT EXISTS renewals (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	owner_id   INTEGER NOT NULL,
+	type_id    INTEGER NOT NULL,
+	contact_id INTEGER NOT NULL DEFAULT 0,
+	phone      TEXT NOT NULL DEFAULT '',
+	name       TEXT NOT NULL DEFAULT '',
+	title      TEXT NOT NULL DEFAULT '',
+	amount     TEXT NOT NULL DEFAULT '',
+	due        INTEGER NOT NULL,
+	fields     TEXT NOT NULL DEFAULT '{}',
+	status     TEXT NOT NULL DEFAULT 'open',   -- open, done, lost
+	reminded   TEXT NOT NULL DEFAULT '[]',
+	note       TEXT NOT NULL DEFAULT '',
+	created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS renewals_due ON renewals(status, due);
+CREATE INDEX IF NOT EXISTS renewals_owner ON renewals(owner_id, status, due);
+CREATE TABLE IF NOT EXISTS tasks (
+	id          INTEGER PRIMARY KEY AUTOINCREMENT,
+	owner_id    INTEGER NOT NULL,
+	title       TEXT NOT NULL,
+	due         INTEGER NOT NULL DEFAULT 0,
+	repeat      TEXT NOT NULL DEFAULT '',     -- '', daily, weekly, monthly
+	at_time     TEXT NOT NULL DEFAULT '',
+	done_at     INTEGER NOT NULL DEFAULT 0,
+	assignee_id INTEGER NOT NULL DEFAULT 0,
+	contact_id  INTEGER NOT NULL DEFAULT 0,
+	phone       TEXT NOT NULL DEFAULT '',
+	source      TEXT NOT NULL DEFAULT 'manual', -- manual, kit, sequence, renewal
+	note        TEXT NOT NULL DEFAULT '',
+	created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS tasks_owner ON tasks(owner_id, done_at, due);
+CREATE TABLE IF NOT EXISTS task_log (
+	id       INTEGER PRIMARY KEY AUTOINCREMENT,
+	owner_id INTEGER NOT NULL,
+	task_id  INTEGER NOT NULL,
+	title    TEXT NOT NULL,
+	at       INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS form_entries (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	owner_id   INTEGER NOT NULL,
+	form_key   TEXT NOT NULL,
+	contact_id INTEGER NOT NULL DEFAULT 0,
+	phone      TEXT NOT NULL,
+	name       TEXT NOT NULL DEFAULT '',
+	answers    TEXT NOT NULL DEFAULT '{}',
+	ip         TEXT NOT NULL DEFAULT '',
+	created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS form_entries_owner ON form_entries(owner_id, created_at);
 CREATE INDEX IF NOT EXISTS stats_owner ON stats_daily(owner_id, day);
 `
 
@@ -287,6 +415,7 @@ func migrate2(db *sql.DB) error {
 		{"plans", "limits", "TEXT NOT NULL DEFAULT '{}'"},
 		{"campaigns", "gap_min", "INTEGER NOT NULL DEFAULT 0"},
 		{"campaigns", "gap_max", "INTEGER NOT NULL DEFAULT 0"},
+		{"autoreplies", "source", "TEXT NOT NULL DEFAULT 'manual'"},
 	}
 	for _, a := range adds {
 		if err := addColumn(db, a.table, a.col, a.def); err != nil {

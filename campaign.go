@@ -737,6 +737,8 @@ func (m *Manager) runScheduler() {
 func (m *Manager) schedulerTick() {
 	ctx := m.ctx
 	now := time.Now().Unix()
+	m.runSequences(ctx)
+	m.runRenewals(ctx)
 	// 1. start due campaigns
 	rows, err := m.db.QueryContext(ctx, `SELECT id FROM campaigns WHERE status='scheduled' AND next_run>0 AND next_run<=? ORDER BY next_run LIMIT 20`, now)
 	if err == nil {

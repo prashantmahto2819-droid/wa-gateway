@@ -20,6 +20,7 @@ const ROUTES = [
   { re: /^\/app\/licence\/?$/, mod: 'licence', nav: 'licence' },
   { re: /^\/app\/settings\/?$/, mod: 'settings', nav: 'settings' },
   { re: /^\/app\/team\/?$/, mod: 'team', nav: 'team', perm: 'read' },
+  { re: /^\/app\/kit\/?$/, mod: 'kit', nav: 'kit' },
   { re: /^\/app\/admin\/?$/, mod: 'admin', nav: 'admin', view: 'overview', admin: true },
   { re: /^\/app\/admin\/(users|plans|licences|activations|settings|inbox|server|audit)\/?$/, mod: 'admin', nav: 'admin-$1', keys: ['view'], admin: true },
 ];
@@ -36,6 +37,9 @@ const NAV = [
     ['contacts', '/app/contacts', 'users', 'Contacts'],
     ['lists', '/app/lists', 'list', 'Lists'],
     ['groups', '/app/groups', 'group', 'Groups & channels'],
+  ] },
+  { group: 'Business', items: [
+    ['kit', '/app/kit', 'briefcase', 'Business Kit'],
   ] },
   { group: 'Content', items: [
     ['media', '/app/media', 'image', 'Media library'],
