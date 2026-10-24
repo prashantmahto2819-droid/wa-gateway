@@ -634,7 +634,13 @@ func (s *Session) onMessage(ctx context.Context, e *events.Message) {
 	s.hook("message", data)
 
 	if !info.IsFromMe && fresh && !e.IsEdit && content["type"] != "reaction" {
-		go s.runAutoReplies(chatPN, info.IsGroup, firstTime, text, choice, info.PushName, info.ID, sender)
+		buttonID, _ := content["button_id"].(string)
+		go func() {
+			if isDM && s.runFlows(chatPN, firstTime, text, buttonID, info.PushName) {
+				return // a chatbot flow handled it
+			}
+			s.runAutoReplies(chatPN, info.IsGroup, firstTime, text, choice, info.PushName, info.ID, sender)
+		}()
 		if isDM {
 			go s.m.stopRunsOnReply(context.WithoutCancel(ctx), s.owner(), phoneOf(chatPN))
 		}

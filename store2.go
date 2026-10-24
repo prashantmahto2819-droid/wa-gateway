@@ -422,6 +422,43 @@ CREATE TABLE IF NOT EXISTS posts (
 );
 CREATE INDEX IF NOT EXISTS posts_owner ON posts(owner_id, status, id);
 CREATE UNIQUE INDEX IF NOT EXISTS posts_ext ON posts(website_id, ext_id) WHERE ext_id<>'';
+CREATE TABLE IF NOT EXISTS flows (
+	id           INTEGER PRIMARY KEY AUTOINCREMENT,
+	owner_id     INTEGER NOT NULL,
+	name         TEXT NOT NULL,
+	trigger_type TEXT NOT NULL DEFAULT 'keyword',
+	keywords     TEXT NOT NULL DEFAULT '[]',
+	session      TEXT NOT NULL DEFAULT '',
+	graph        TEXT NOT NULL DEFAULT '{}',
+	active       INTEGER NOT NULL DEFAULT 0,
+	test_mode    INTEGER NOT NULL DEFAULT 0,
+	test_phones  TEXT NOT NULL DEFAULT '[]',
+	priority     INTEGER NOT NULL DEFAULT 10,
+	runs         INTEGER NOT NULL DEFAULT 0,
+	created_at   INTEGER NOT NULL,
+	updated_at   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS flows_owner ON flows(owner_id);
+CREATE TABLE IF NOT EXISTS flow_state (
+	session    TEXT NOT NULL,
+	chat       TEXT NOT NULL,
+	flow_id    INTEGER NOT NULL,
+	node_id    TEXT NOT NULL DEFAULT '',
+	vars       TEXT NOT NULL DEFAULT '{}',
+	updated_at INTEGER NOT NULL,
+	PRIMARY KEY (session, chat)
+);
+CREATE TABLE IF NOT EXISTS flow_log (
+	id       INTEGER PRIMARY KEY AUTOINCREMENT,
+	owner_id INTEGER NOT NULL,
+	flow_id  INTEGER NOT NULL,
+	chat     TEXT NOT NULL,
+	node_id  TEXT NOT NULL DEFAULT '',
+	event    TEXT NOT NULL,
+	detail   TEXT NOT NULL DEFAULT '',
+	at       INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS flow_log_flow ON flow_log(flow_id, id);
 CREATE TABLE IF NOT EXISTS form_entries (
 	id         INTEGER PRIMARY KEY AUTOINCREMENT,
 	owner_id   INTEGER NOT NULL,

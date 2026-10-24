@@ -793,3 +793,10 @@ dl.kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .input-group > .addon { display: inline-flex; align-items: center; padding: 0 10px; border: 1px solid var(--line-strong); border-left: 0; border-radius: 0 var(--r-sm, 8px) var(--r-sm, 8px) 0; background: var(--card-2); color: var(--muted); font-size: 13px; white-space: nowrap; }
 .input-group > input { min-width: 0; flex: 1; }
 [data-pace] h3 { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+/* flow test chat */
+.chat .bubble { align-self: flex-end; margin: 6px 10px; display: block; }
+.chat .bubble.bot { background: var(--card); color: var(--ink); border-radius: 12px 12px 12px 4px; margin-right: auto; padding-bottom: 8px; }
+.chat .bubble.me { margin-left: auto; padding-bottom: 8px; }
+.chat .bubble.sys { background: transparent; box-shadow: none; color: var(--muted); font-size: 12.5px; text-align: center; margin: 4px auto; max-width: 100%; }
+.mb-s { margin-bottom: var(--s2); }

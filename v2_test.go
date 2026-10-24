@@ -33,6 +33,9 @@ type testEnv struct {
 func newTestEnv(t *testing.T, mutate func(*Config)) *testEnv {
 	t.Helper()
 	dir := t.TempDir()
+	loginLimiter.mu.Lock() // every test starts with a clean login rate limit
+	loginLimiter.hits = map[string][]time.Time{}
+	loginLimiter.mu.Unlock()
 	cfg := &Config{Port: "0", DataDir: dir, APIKey: testKey, DeviceName: "test", DefaultCountryCode: "91",
 		MinDelay: time.Second, MaxDelay: 2 * time.Second, DailyLimit: 250, NewContactLimit: 40, SendHourFrom: 0, SendHourTo: 24,
 		MaxMediaBytes: 5 << 20, PerContactWeekly: 3, RecentReplyDays: 30, HealthMinSample: 30, HealthMaxFail: 0.25, HealthMinReply: 0.03,

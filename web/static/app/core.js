@@ -390,6 +390,8 @@ const P = {
   filter: 'M3 5h18l-7 8v6l-4 2v-8z',
   grip: 'M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01',
   repeat: 'M17 2l4 4-4 4M3 11V8a2 2 0 0 1 2-2h16M7 22l-4-4 4-4M21 13v3a2 2 0 0 1-2 2H3',
+  tag: 'M3 3h8l10 10-8 8L3 11zM7.5 7.5h.01',
+  flag: 'M5 21V4h12l-2 4 2 4H5',
   bell: 'M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10 21a2 2 0 0 0 4 0',
   form: 'M5 3h14v18H5zM9 8h6M9 12h6M9 16h4',
   briefcase: 'M3 8h18v12H3zM8 8V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v3M3 13h18',

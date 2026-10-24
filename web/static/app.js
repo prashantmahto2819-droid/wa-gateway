@@ -22,6 +22,7 @@ const ROUTES = [
   { re: /^\/app\/team\/?$/, mod: 'team', nav: 'team', perm: 'read' },
   { re: /^\/app\/kit\/?$/, mod: 'kit', nav: 'kit' },
   { re: /^\/app\/publisher\/?$/, mod: 'publisher', nav: 'publisher' },
+  { re: /^\/app\/flows\/?$/, mod: 'flows', nav: 'flows' },
   { re: /^\/app\/admin\/?$/, mod: 'admin', nav: 'admin', view: 'overview', admin: true },
   { re: /^\/app\/admin\/(users|plans|licences|activations|settings|inbox|server|audit)\/?$/, mod: 'admin', nav: 'admin-$1', keys: ['view'], admin: true },
 ];
@@ -47,6 +48,7 @@ const NAV = [
     ['media', '/app/media', 'image', 'Media library'],
     ['templates', '/app/templates', 'template', 'Templates'],
     ['autoreplies', '/app/autoreplies', 'bot', 'Auto-replies', 'automation'],
+    ['flows', '/app/flows', 'sparkle', 'Chatbot flows', 'automation'],
   ] },
   { group: 'Account', items: [
     ['team', '/app/team', 'users', 'Team'],

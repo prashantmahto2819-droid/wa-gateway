@@ -162,6 +162,13 @@ func (a *API) routes() http.Handler {
 	mux.HandleFunc("POST /api/tasks", auth(a.requirePerm("send", a.saveTask)))
 	mux.HandleFunc("PATCH /api/tasks/{id}", auth(a.requirePerm("send", a.saveTask)))
 	mux.HandleFunc("DELETE /api/tasks/{id}", auth(a.requirePerm("send", a.deleteTask)))
+	// Chatbot flows
+	mux.HandleFunc("GET /api/flows", auth(a.listFlows))
+	mux.HandleFunc("POST /api/flows", auth(a.requirePerm("automation", a.saveFlow)))
+	mux.HandleFunc("PATCH /api/flows/{id}", auth(a.requirePerm("automation", a.saveFlow)))
+	mux.HandleFunc("DELETE /api/flows/{id}", auth(a.requirePerm("automation", a.deleteFlow)))
+	mux.HandleFunc("GET /api/flows/{id}/logs", auth(a.flowLogs))
+	mux.HandleFunc("POST /api/flows/{id}/test", auth(a.requirePerm("automation", a.testFlow)))
 	// Link Publisher: website registry, signed inbound, approval inbox
 	mux.HandleFunc("GET /api/websites", auth(a.requirePerm("integration", a.listWebsites)))
 	mux.HandleFunc("POST /api/websites", auth(a.requirePerm("integration", a.saveWebsite)))
