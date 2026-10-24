@@ -192,6 +192,10 @@ func (a *API) saveList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if l.ID == 0 {
+		if err := a.countCheck(ctx, p.UserID, "lists", "send_lists"); err != nil {
+			a.fail(w, err)
+			return
+		}
 		res, err := a.m.db.ExecContext(ctx, `INSERT INTO send_lists(owner_id, name, description, items, created_at, updated_at) VALUES(?,?,?,?,?,?)`,
 			p.UserID, l.Name, l.Description, jsonText(l.Items), now, now)
 		if err != nil {

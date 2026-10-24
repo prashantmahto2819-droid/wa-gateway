@@ -320,6 +320,12 @@ func (a *API) saveWebsite(w http.ResponseWriter, r *http.Request) {
 		}
 		site.Routes = in.Routes
 	}
+	if isNew {
+		if err := a.countCheck(ctx, p.UserID, "websites", "websites"); err != nil {
+			a.fail(w, err)
+			return
+		}
+	}
 	if site.Name == "" {
 		writeErr(w, http.StatusBadRequest, "bad_request", errors.New("give the website a name"))
 		return

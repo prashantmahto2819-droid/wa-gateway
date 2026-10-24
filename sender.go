@@ -99,7 +99,11 @@ func (s *Session) row(ctx context.Context) sessionRow {
 // the daily ceiling, so a new number never sends a flood. The admin's
 // settings (Admin → Pacing & quotas) override the .env values.
 func (s *Session) dailyLimit(pairedAt int64) int {
-	return quotaFor(s.m.adminPacing(s.m.ctx), s.m.cfg, pairedAt, time.Now())
+	a := envPacing(s.m.cfg)
+	if s.m.db != nil {
+		a = s.m.adminPacing(s.m.ctx)
+	}
+	return quotaFor(a, s.m.cfg, pairedAt, time.Now())
 }
 
 func quotaFor(a AdminPacing, cfg *Config, pairedAt int64, now time.Time) int {

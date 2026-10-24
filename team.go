@@ -200,6 +200,25 @@ func (a *API) seatCheck(ctx context.Context, workspace int64, adding int) error 
 	return nil
 }
 
+// countCheck enforces a plan "limits" entry (websites, flows, sequences,
+// lists, renewal_types …) against the rows this workspace already has.
+func (a *API) countCheck(ctx context.Context, workspace int64, name, table string) error {
+	eff := a.lic.effective(ctx, workspace)
+	if eff.Plan == nil || eff.Plan.Unlimited {
+		return nil
+	}
+	limit := eff.Plan.Limit(name)
+	if limit <= 0 {
+		return nil
+	}
+	var n int64
+	_ = a.m.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+table+` WHERE owner_id=?`, workspace).Scan(&n)
+	if n+1 > limit {
+		return &limitError{name: name}
+	}
+	return nil
+}
+
 // inviteInfo (public): who is inviting, for the join page.
 func (a *API) inviteInfo(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")

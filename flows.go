@@ -922,6 +922,12 @@ func (a *API) saveFlow(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if f.ID == 0 {
+		if err := a.countCheck(ctx, p.UserID, "flows", "flows"); err != nil {
+			a.fail(w, err)
+			return
+		}
+	}
 	if len(f.Graph.Nodes) > 200 {
 		writeErr(w, http.StatusBadRequest, "bad_request", errors.New("at most 200 steps"))
 		return

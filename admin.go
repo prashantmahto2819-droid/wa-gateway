@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -58,7 +59,42 @@ func (a *API) adminOverview(w http.ResponseWriter, r *http.Request) {
 		"messages_unread":   count(`SELECT COUNT(*) FROM inbox WHERE read=0`),
 		"queued":            count(`SELECT COUNT(*) FROM gw_outbox WHERE status='queued'`),
 		"running_campaigns": count(`SELECT COUNT(*) FROM campaigns WHERE status='running'`),
+		"posts_pending":     count(`SELECT COUNT(*) FROM posts WHERE status='pending'`),
+		"flows_active":      count(`SELECT COUNT(*) FROM flows WHERE active=1`),
+		"proxies":           count(`SELECT COUNT(*) FROM proxies WHERE active=1`),
+		"sessions_paused":   count(`SELECT COUNT(*) FROM gw_sessions WHERE paused=1`),
+		"alerts":            a.adminAlerts(ctx),
 		"version":           version, "mode": a.mode()})
+}
+
+// adminAlerts lists things the super admin should look at.
+func (a *API) adminAlerts(ctx context.Context) []map[string]any {
+	out := []map[string]any{}
+	now := time.Now()
+	for _, s := range a.m.list() {
+		r := s.row(ctx)
+		s.mu.Lock()
+		st, ban := s.status, s.banUntil
+		s.mu.Unlock()
+		switch {
+		case ban.After(now):
+			out = append(out, map[string]any{"title": s.name + ": temporarily banned", "detail": "until " + ban.Format("02 Jan 15:04"), "href": "/app/admin/users"})
+		case st == StOutdated:
+			out = append(out, map[string]any{"title": s.name + ": WhatsApp protocol outdated", "detail": "run update.sh --whatsmeow", "href": ""})
+		case r.paused && r.pauseReason != "manual" && r.pauseReason != "":
+			out = append(out, map[string]any{"title": s.name + ": paused automatically", "detail": r.pauseReason, "href": ""})
+		}
+	}
+	var n int
+	_ = a.m.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM licences WHERE status='active' AND expires_at BETWEEN ? AND ?`, now.Unix(), now.AddDate(0, 0, 7).Unix()).Scan(&n)
+	if n > 0 {
+		out = append(out, map[string]any{"title": fmt.Sprintf("%d licences expire within 7 days", n), "detail": "", "href": "/app/admin/licences"})
+	}
+	_ = a.m.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM proxies WHERE active=1 AND last_result<>'' AND last_result NOT LIKE 'ok%'`).Scan(&n)
+	if n > 0 {
+		out = append(out, map[string]any{"title": fmt.Sprintf("%d proxies failed their last test", n), "detail": "", "href": "/app/admin/proxies"})
+	}
+	return out
 }
 
 func (a *API) adminUsers(w http.ResponseWriter, r *http.Request) {

@@ -11,6 +11,7 @@ export async function render(ctx) {
   await fn(ctx, ctx.root.querySelector('[data-body]'), ctx.root.querySelector('[data-actions]'), ctx.root.querySelector('[data-sub]'));
 }
 const featList = () => (featureKeys || FEATURES.map(([k]) => k)).map((k) => [k, (FEATURES.find(([x]) => x === k) || [k, k.charAt(0).toUpperCase() + k.slice(1)])[1]]);
+const ENTITLEMENTS = [['staff', 'Staff seats'], ['websites', 'Websites (Link Publisher)'], ['flows', 'Chatbot flows'], ['sequences', 'Follow-up sequences'], ['lists', 'Saved lists']];
 const truthy = (v) => v === true || v === 'true' || v === '1' || v === 1;
 const statusTone = (s) => ({ active: 'ok', unused: 'info', expired: 'warn', suspended: 'bad', disabled: 'bad' }[s] || 'muted');
 let plansCache = null, featureKeys = null;
@@ -26,10 +27,12 @@ async function overview(ctx, body, _a, sub) {
   const j = await api('GET', '/api/admin/overview');
   if (!ctx.isCurrent() || !j.ok) return;
   const tiles = [['megaphone', 'Running campaigns', j.running_campaigns ?? 0], ['clock', 'Queued messages', j.queued ?? 0], ['users', 'Users', j.users, '/app/admin/users'], ['key', 'Active licences', j.active_licences, '/app/admin/licences'], ['phone', 'Numbers', `${fmtNum(j.connected)} / ${fmtNum(j.sessions)}`, null, 'connected / total'],
-    ['send', 'Sent today', j.sent_today], ['poll', 'Sent this month', j.sent_month], ['inbox', 'Unread messages', j.messages_unread, '/app/admin/inbox']];
+    ['send', 'Sent today', j.sent_today], ['poll', 'Sent this month', j.sent_month], ['inbox', 'Unread messages', j.messages_unread, '/app/admin/inbox'],
+    ['link', 'Posts waiting approval', j.posts_pending ?? 0], ['sparkle', 'Active flows', j.flows_active ?? 0], ['globe', 'Proxies in pool', j.proxies ?? 0, '/app/admin/proxies'], ['alert', 'Numbers paused / banned', j.sessions_paused ?? 0]];
   body.innerHTML = html`<div class="grid g3">${tiles.map(([i, l, v, href, s]) => html`<${raw(href ? 'a' : 'div')} class="panel ${href ? 'tile-link' : ''}" ${href ? raw(`href="${href}" data-link`) : ''} style="${href ? '' : 'display:block'}">
     <div class="kpi"><span class="k-label">${ic(i, 15)}${t(l)}</span><span class="k-val">${typeof v === 'number' ? fmtNum(v) : v}</span>${s ? html`<span class="k-sub">${t(s)}</span>` : ''}</div></${raw(href ? 'a' : 'div')}>`)}</div>
-    <div class="grid g4 mt">${[['users', '/app/admin/users', 'Users'], ['template', '/app/admin/plans', 'Plans'], ['key', '/app/admin/licences', 'Licences'], ['settings', '/app/admin/settings', 'Site settings']].map(([i, h, l]) => html`<a class="tile-link" href="${h}" data-link><span class="list-ico">${ic(i)}</span><b>${t(l)}</b></a>`)}</div>`.s;
+    ${(j.alerts || []).length ? html`<section class="panel mt"><div class="panel-head"><h2>${t('Needs attention')}</h2></div><ul class="list">${j.alerts.map((a) => html`<li><span class="list-ico">${ic('alert')}</span><span class="li-main"><b>${a.title}</b><small>${a.detail}</small></span>${a.href ? html`<a class="btn sm" href="${a.href}" data-link>${t('Open')}</a>` : ''}</li>`)}</ul></section>` : ''}
+    <div class="grid g4 mt">${[['users', '/app/admin/users', 'Users'], ['template', '/app/admin/plans', 'Plans'], ['key', '/app/admin/licences', 'Licences'], ['globe', '/app/admin/proxies', 'Proxy pool'], ['shield', '/app/admin/settings#sending', 'Sending safety & quotas'], ['log', '/app/admin/audit', 'Audit log'], ['inbox', '/app/admin/inbox', 'Inbox'], ['settings', '/app/admin/settings', 'Site settings']].map(([i, h, l]) => html`<a class="tile-link" href="${h}" data-link><span class="list-ico">${ic(i)}</span><b>${t(l)}</b></a>`)}</div>`.s;
 }
 
 // ------------------------------------------------------------------ users
@@ -102,6 +105,7 @@ async function plans(ctx, body, actions, sub) {
       <div class="row between"><h3>${p.name}</h3><span class="row" style="gap:4px">${p.public ? pill(t('Public'), 'ok', false) : pill(t('Hidden'), 'muted', false)}${p.trial ? pill(t('Trial'), 'info', false) : ''}</span></div>
       <div class="price">${p.currency === 'INR' ? '₹' : (p.currency || '') + ' '}${fmtNum(p.price)}<small> / ${t('{n} days', { n: p.period_days })}</small></div>
       ${planLimits(p)}
+      ${Object.values(p.limits || {}).some((v) => v > 0) ? html`<p class="cell-sub">${ENTITLEMENTS.filter(([k]) => p.limits?.[k] > 0).map(([k, l]) => t(l) + ': ' + fmtNum(p.limits[k])).join(' · ')}</p>` : ''}
       <p class="cell-sub" style="margin:0">${featList().filter(([k]) => p.features?.[k]).map(([, l]) => t(l)).join(' · ')}</p>
       <div class="row"><button class="btn sm" data-edit="${p.id}">${ic('edit', 14)}${t('Edit')}</button><button class="btn-icon danger" data-del="${p.id}" aria-label="${t('Delete')} ${p.name}">${ic('trash', 16)}</button></div></article>`)}</div>`.s
       : empty('template', t('No plans yet'), t('Create at least one plan before selling licences.')).s;
@@ -116,14 +120,17 @@ async function plans(ctx, body, actions, sub) {
         ${num('period_days', 'Days')}${num('max_numbers', 'Max numbers')}${num('daily_limit', 'Daily limit per number')}${num('monthly_messages', 'Messages per month')}${num('max_contacts', 'Max contacts')}${num('storage_mb', 'Storage (MB)')}${num('sort', 'Sort order')}
         <label class="field full"><span>${t('Description')}</span><input name="description" value="${p.description || ''}"></label></div>
       <p class="hint" style="margin-top:-6px">${t('0 means unlimited (daily limit 0 uses the server default).')}</p>
+      <fieldset><legend>${t('Entitlements')} <small class="muted">· ${t('0 = unlimited')}</small></legend><div class="form-grid g3">
+        ${ENTITLEMENTS.map(([k, l]) => html`<label class="field"><span>${t(l)}</span><input name="lim_${k}" type="number" min="0" value="${p.limits?.[k] || 0}"></label>`)}</div></fieldset>
       <fieldset><legend>${t('Features')}</legend><div class="events-grid" style="font-family:inherit">${featList().map(([k, l]) => html`<label class="check"><input type="checkbox" name="f_${k}" ${p.features?.[k] ? 'checked' : ''}>${t(l)}</label>`)}</div></fieldset>
       <div class="row" style="gap:24px">${toggle('public', p.public, t('Show publicly'))}${toggle('trial', p.trial, t('Trial plan'))}${toggle('highlight', p.highlight, t('Highlight'))}</div></form>`,
     footer: html`<button class="btn ghost" data-close>${t('Cancel')}</button><button class="btn primary" data-ok>${t('Save plan')}</button>` });
     m.foot.querySelector('[data-ok]').addEventListener('click', async () => {
       const f = m.body.querySelector('form'); if (!f.reportValidity()) return;
-      const d = formData(f); const features = {};
+      const d = formData(f); const features = {}; const limits = {};
       featList().forEach(([k]) => { features[k] = !!d['f_' + k]; delete d['f_' + k]; });
-      d.features = features;
+      ENTITLEMENTS.forEach(([k]) => { limits[k] = Math.max(0, Number(d['lim_' + k]) || 0); delete d['lim_' + k]; });
+      d.features = features; d.limits = limits;
       const j = isNew ? await api('POST', '/api/admin/plans', d) : await api('PATCH', `/api/admin/plans/${p.id}`, d);
       if (j.ok) { toast(t('Plan saved')); m.close(); load(); }
     });

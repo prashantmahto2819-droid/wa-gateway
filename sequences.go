@@ -470,6 +470,12 @@ func (a *API) saveSequence(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", errors.New("trigger must be lead_new, stage, tag, form or manual"))
 		return
 	}
+	if s.ID == 0 {
+		if err := a.countCheck(ctx, p.UserID, "sequences", "sequences"); err != nil {
+			a.fail(w, err)
+			return
+		}
+	}
 	if len(s.Steps) == 0 || len(s.Steps) > 30 {
 		writeErr(w, http.StatusBadRequest, "bad_request", errors.New("a sequence needs 1 to 30 steps"))
 		return
