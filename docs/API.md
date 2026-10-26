@@ -134,6 +134,20 @@ Users see only their own sessions. `name` is generated for users (`u<id>-<slug>`
 `menu` is sent as a numbered list ("1. Price list…"); when the person replies with the number, the `message` webhook includes `menu_choice:{id,text}` and `menu`-trigger auto-replies fire.
 `buttons` and `list` are real interactive messages (native flow / list). A tap arrives as a `message` webhook with `type:"button_reply"|"list_reply"`, `button_id` and `menu_choice:{id,text}`, so the same `menu`-trigger auto-replies work for menus, buttons and lists. Not available for channels or Status.
 
+### Files that follow a message
+
+`then` on any message (Send, API, campaigns, templates, auto-replies) adds up to 5 files that go to the same person right after it, each its own WhatsApp message with its own caption:
+
+```json
+{"to":"919876543210","text":"आज का ऑफ़र: https://shop.example.com/sale","unique_code":"ref",
+ "then":[{"media":{"type":"document","media_id":12,"filename":"rates.pdf"},"text":"रेट लिस्ट"},
+         {"media":{"type":"image","media_id":13}}]}
+```
+
+They are sent by the same number, in order, with the account's API gap between them, and each gets its own unique code (a follow-up inherits `unique_code` / `unique_prefix` unless it sets its own). A follow-up leaves `to` empty and cannot carry `then` or `variants` of its own. In the queue a recipient still gets one row — so the per-person weekly limit, opt-outs and duplicate checks count one delivery, not several.
+
+The send result carries `then: [{id} | {error}]`. If the main message was sent, the row is never retried even when a file failed — a retry would deliver the message twice. Queued files must use `media.url` or `media.media_id`, not base64.
+
 ## Groups, communities, channels
 
 | Method | Path | Notes |

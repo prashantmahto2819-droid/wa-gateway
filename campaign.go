@@ -277,8 +277,10 @@ func (a *API) campaignFromRequest(r *http.Request, p *Principal, c *Campaign) er
 		return err
 	}
 	for _, m := range append([]SendRequest{c.Message}, c.Message.Variants...) {
-		if m.Media != nil && m.Media.Base64 != "" {
-			return errors.New("campaign media must be media.url or media.media_id (upload it to the Media library)")
+		for _, x := range append([]SendRequest{m}, m.Then...) {
+			if x.Media != nil && x.Media.Base64 != "" {
+				return errors.New("campaign media must be media.url or media.media_id (upload it to the Media library)")
+			}
 		}
 	}
 	switch c.Speed {

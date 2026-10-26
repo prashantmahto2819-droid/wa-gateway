@@ -102,7 +102,16 @@ export function bubbleHTML(m, { vars = {}, story = false, bg = '#0b6e5f', link =
       <div class="b-listpreview">${(rows.length ? rows : [{ title: t('Row') }]).slice(0, 10).map((r) => html`<div class="b-row"><span class="r"></span><div><div>${r.title}</div>${r.description ? html`<small>${r.description}</small>` : ''}</div></div>`)}</div>`;
   }
   const mention = m.mention_all ? html`<div class="chat-note">${t('@everyone will be mentioned')}</div>` : '';
-  return html`${mention}<div class="bubble">${inner}${ts}</div>`;
+  // The files that follow show as their own bubbles, the way they arrive.
+  const follow = !story && (m.then || []).length
+    ? html`${(m.then || []).map((f) => {
+        const md = f.media || {};
+        const body = md.type === 'image' && mediaSrc(md) ? html`<div class="b-media"><img alt="" src="${mediaSrc(md)}"></div>`
+          : html`<div class="b-doc">${ic(md.type === 'video' ? 'video' : md.type === 'audio' ? 'mic' : md.type === 'image' ? 'image' : 'file', 18)}<span class="ellipsis">${md.filename || md.url || t('File')}</span></div>`;
+        const cap = f.text ? sub(m.unique_code ? f.text + '\n\n' + (m.unique_code === 'number' ? (m.unique_prefix || '#') + ' ' + SAMPLE.random : (m.unique_prefix || 'Ref:') + ' ' + SAMPLE.ref) : f.text) : '';
+        return html`<div class="bubble">${body}${cap}${ts}</div>`;
+      })}` : '';
+  return html`${mention}<div class="bubble">${inner}${ts}</div>${follow}`;
 }
 function mediaSrc(md) { return md.media_id ? `/api/media/${encodeURIComponent(md.media_id)}/file` : (/^(https?:|data:|blob:|\/)/.test(md.url || '') ? md.url : ''); }
 function spin(s) { return s.replace(/\{([^{}]*\|[^{}]*)\}/g, (_, g) => g.split('|')[0]); }
@@ -167,6 +176,7 @@ export function createComposer(root, opts = {}) {
     preview: opts.message?.preview !== false,
     link: null, linkFor: '',
     unique: opts.message?.unique_code || '', uniquePrefix: opts.message?.unique_prefix || '',
+    then: (opts.message?.then || []).map((f) => ({ media: { ...(f.media || {}) }, text: f.text || '', name: f.media?.filename || '' })),
     vars: [...new Set([...BASE_VARS, ...(opts.customVars || [])])],
     groupMode: !!opts.groupMode,
     story: !!opts.story, bg: '#0b6e5f',
@@ -182,6 +192,7 @@ export function createComposer(root, opts = {}) {
         </div>`}
         <div data-kind-body>${kindBody()}</div>
         <div data-uq ${NO_TEXT.includes(st.kind) ? 'hidden' : ''}>${uqBlock()}</div>
+        <div data-then ${st.story ? 'hidden' : ''}>${thenBlock()}</div>
         ${st.groupMode && !st.story ? toggle('mention_all', st.mention_all, t('Mention everyone in the group'), t('Each member gets a notification. Use rarely.')) : ''}
       </div>
       <div class="preview" aria-label="${t('Preview')}">
@@ -335,6 +346,29 @@ export function createComposer(root, opts = {}) {
   }
   function drawUq() { const el = root.querySelector('[data-uq]'); if (el) { el.innerHTML = uqBlock().s; el.hidden = NO_TEXT.includes(st.kind); } }
 
+  // Files that follow the message: the offer text (or a link) goes first, then the
+  // price list, the brochure, the form — each its own WhatsApp message with its own
+  // caption and its own unique code, from the same number, with the usual gap.
+  function thenBlock() {
+    if (st.story) return '';
+    return html`<fieldset class="panel panel-pad">
+      <legend>${ic('file', 14)} ${t('Files after this message')} ${st.then.length ? html`<span class="badge">${st.then.length}</span>` : ''}</legend>
+      ${st.then.length ? html`<div class="stack" style="gap:10px">${st.then.map((f, i) => html`<div class="media-pick" data-then-row="${i}">
+          <div class="media-thumb">${f.media.type === 'image' && mediaSrc(f.media) ? html`<img alt="" src="${mediaSrc(f.media)}">` : ic(mediaIcon(f.media.type || 'document'), 22)}</div>
+          <div class="grow" style="min-width:0"><b class="ellipsis" style="display:block">${f.name || f.media.filename || f.media.url || t('File {n}', { n: i + 1 })}</b>
+            <input type="text" data-then-cap="${i}" value="${f.text}" placeholder="${t('Caption (optional)')}" style="width:100%;margin-top:4px"></div>
+          <span class="btn-row"><button type="button" class="btn-icon" data-then-up="${i}" aria-label="${t('Move up')}">${ic('up', 14)}</button><button type="button" class="btn-icon danger" data-then-rm="${i}" aria-label="${t('Remove')}">${ic('trash', 16)}</button></span></div>`)}</div>` : ''}
+      ${st.then.length < 5 ? html`<div class="row mt-s"><button type="button" class="btn sm" data-then-lib>${ic('image', 15)}${t('From media library')}</button>
+          <label class="btn sm" tabindex="0">${ic('upload', 15)}${t('Upload')}<input type="file" data-then-file hidden multiple></label></div>` : html`<p class="hint">${t('Five files at most.')}</p>`}
+      <p class="hint">${t('Each file goes as its own message right after this one, to the same person, from the same number — with your normal gap in between. The unique code above applies to each of them too.')}</p></fieldset>`;
+  }
+  function drawThen() { const el = root.querySelector('[data-then]'); if (el) { el.innerHTML = thenBlock().s; el.hidden = !!st.story; } }
+  function addThen(md, name) {
+    if (st.then.length >= 5) return toast(t('Five files at most.'), 'warn');
+    st.then.push({ media: md, text: '', name: name || md.filename || '' });
+    drawThen(); updatePreview();
+  }
+
   function mediaBlock() {
     const md = st.media;
     const has = md.media_id || md.url;
@@ -380,6 +414,7 @@ export function createComposer(root, opts = {}) {
     else if (el.dataset.cbtn != null) { const [i, bi, f] = el.dataset.cbtn.split(':'); const b = st.carousel.cards[+i].buttons[+bi]; if (f === 'text') b.text = el.value; else if (b.type === 'url') b.url = el.value; else if (b.type === 'call') b.phone = el.value; else if (b.type === 'copy') b.code = el.value; else b.id = el.value.replace(/\s+/g, '_').toLowerCase(); }
     else if (el.dataset.row != null) { const [si, ri, f] = el.dataset.row.split(':'); st.list.sections[+si].rows[+ri][f] = f === 'id' ? el.value.replace(/\s+/g, '_').toLowerCase() : el.value; }
     else if (el.matches('[data-uq-prefix]')) st.uniquePrefix = el.value;
+    else if (el.dataset.thenCap != null) { st.then[+el.dataset.thenCap].text = el.value; updatePreview(); return; }
     else if (el.name === 'mention_all') st.mention_all = el.checked;
     else if (el.name === 'preview') st.preview = el.checked;
     else if (el.name === 'poll.multiple') st.poll.multiple = el.checked;
@@ -410,6 +445,14 @@ export function createComposer(root, opts = {}) {
         redrawBody();
       } else box.innerHTML = '';
     }
+    if (el.matches('[data-then-file]') && el.files.length) {
+      for (const f of [...el.files].slice(0, 5 - st.then.length)) {
+        const fd = new FormData(); fd.append('file', f);
+        const j = await upload('/api/media', fd);
+        if (j.ok && j.media) addThen({ type: j.media.kind || kindFromMime(j.media.mime || ''), media_id: j.media.id, filename: j.media.name }, j.media.name);
+      }
+      el.value = '';
+    }
   });
   root.addEventListener('keydown', (e) => {
     const l = e.target.closest('[data-upload-label]');
@@ -431,6 +474,9 @@ export function createComposer(root, opts = {}) {
       if (b.hasAttribute('data-var-custom')) redrawBody();
       return;
     }
+    if (b.hasAttribute('data-then-lib')) { const x = await pickMedia({}); if (x) addThen({ type: x.kind || 'document', media_id: x.id, filename: x.name }, x.name); return; }
+    if (b.dataset.thenRm != null) { st.then.splice(+b.dataset.thenRm, 1); drawThen(); updatePreview(); return; }
+    if (b.dataset.thenUp != null) { const i = +b.dataset.thenUp; if (i > 0) { [st.then[i - 1], st.then[i]] = [st.then[i], st.then[i - 1]]; drawThen(); updatePreview(); } return; }
     if (b.hasAttribute('data-poll-add')) { st.poll.options.push(''); redrawBody(); focusLast('[data-poll-opt]'); return; }
     if (b.dataset.pollRm != null) { st.poll.options.splice(+b.dataset.pollRm, 1); redrawBody(); return; }
     if (b.hasAttribute('data-menu-add')) { st.menu.options.push({ id: '', text: '' }); redrawBody(); focusLast('[data-menu-text]'); return; }
@@ -515,6 +561,7 @@ export function createComposer(root, opts = {}) {
     }
     if (st.groupMode && st.mention_all) m.mention_all = true;
     if (st.unique && !NO_TEXT.includes(st.kind)) { m.unique_code = st.unique; if (st.uniquePrefix.trim()) m.unique_prefix = st.uniquePrefix.trim(); }
+    if (!st.story && st.then.length) m.then = st.then.map((f) => { const o = { media: cleanMedia(f.media) }; if (f.text.trim()) o.text = f.text.trim(); return o; });
     m.typing = st.typing;
     if (st.kind === 'text' && !st.preview) m.preview = false;
     return m;

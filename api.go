@@ -858,6 +858,12 @@ func (a *API) doEnqueue(w http.ResponseWriter, r *http.Request, pool []string, b
 			writeErr(w, http.StatusBadRequest, "bad_request", errors.New("message "+itoa(i)+": queued messages must use media.url or media.media_id, not base64"))
 			return
 		}
+		for _, f := range msgs[i].Then { // the files that follow it are queued too
+			if f.Media != nil && f.Media.Base64 != "" {
+				writeErr(w, http.StatusBadRequest, "bad_request", errors.New("message "+itoa(i)+": queued files must use media.url or media.media_id, not base64"))
+				return
+			}
+		}
 	}
 	owner := p.UserID
 	if s, err := a.m.get(pool[0]); err == nil {

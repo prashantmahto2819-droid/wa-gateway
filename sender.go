@@ -28,6 +28,15 @@ type SendResult struct {
 	Unconfirmed bool `json:"unconfirmed,omitempty"`
 	Recipients  int  `json:"recipients,omitempty"` // Status: how many people it was shared with
 	Parts       int  `json:"parts,omitempty"`      // Status: posted in this many parts (split option)
+	// Then: the files that followed this message, in order. A file that could
+	// not be sent carries its error; the message itself is never sent again on
+	// its account, because that would deliver the main message twice.
+	Then []FollowResult `json:"then,omitempty"`
+}
+
+type FollowResult struct {
+	ID    string `json:"id,omitempty"`
+	Error string `json:"error,omitempty"`
 }
 
 // refusedForSize reports a server refusal that a smaller Status audience may fix.
@@ -250,7 +259,52 @@ type sendOpts struct {
 	reply  bool // auto-reply: "reading" pause + reply typing setting
 }
 
+// send delivers the message and then the files that follow it. The main message
+// decides whether this counts as sent: if a file fails, it is reported but the
+// message is not queued again, because a retry would deliver it twice.
 func (s *Session) send(ctx context.Context, req *SendRequest, opts sendOpts) (*SendResult, error) {
+	if err := req.validate(); err != nil {
+		return nil, err
+	}
+	if len(req.Then) == 0 {
+		return s.sendOne(ctx, req, opts)
+	}
+	main := *req
+	follow := main.Then
+	main.Then = nil
+	res, err := s.sendOne(ctx, &main, opts)
+	if err != nil {
+		return res, err
+	}
+	if res == nil {
+		res = &SendResult{}
+	}
+	for i := range follow {
+		f := follow[i]
+		f.To = req.To
+		if f.Vars == nil {
+			f.Vars = req.Vars
+		}
+		if f.UniqueCode == "" {
+			f.UniqueCode, f.UniquePrefix = req.UniqueCode, req.UniquePrefix
+		}
+		// direct: the account's own gap goes between the files, so a set of
+		// attachments doesn't leave as one burst.
+		fOpts := opts
+		fOpts.direct, fOpts.reply = true, false
+		fr, ferr := s.sendOne(ctx, &f, fOpts)
+		item := FollowResult{}
+		if ferr != nil {
+			item.Error = ferr.Error()
+		} else if fr != nil {
+			item.ID = fr.ID
+		}
+		res.Then = append(res.Then, item)
+	}
+	return res, nil
+}
+
+func (s *Session) sendOne(ctx context.Context, req *SendRequest, opts sendOpts) (*SendResult, error) {
 	if err := req.validate(); err != nil {
 		return nil, err
 	}

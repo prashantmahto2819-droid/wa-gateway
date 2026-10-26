@@ -55,6 +55,12 @@ type SendRequest struct {
 	// Variants: other versions of this message; each recipient gets one of
 	// [this message + variants] at random (campaigns and API sends).
 	Variants []SendRequest `json:"variants,omitempty"`
+	// Then: files that follow this message to the same person, each its own
+	// WhatsApp message with its own caption — a price list with the offer
+	// text, a brochure and a form under one link message. They go from the
+	// same number, in order, with the account's normal gap between them, and
+	// each gets its own unique code. "to" is inherited and must stay empty.
+	Then []SendRequest `json:"then,omitempty"`
 }
 
 type PollReq struct {
@@ -146,6 +152,24 @@ func (r *SendRequest) validateContent() error {
 		}
 		if err := v.validateContent(); err != nil {
 			return fmt.Errorf("variant %d: %w", i+2, err)
+		}
+	}
+	if len(r.Then) > 5 {
+		return errors.New("at most 5 files can follow a message")
+	}
+	for i := range r.Then {
+		f := &r.Then[i]
+		if len(f.Then) > 0 || len(f.Variants) > 0 {
+			return errors.New("a follow-up can't have follow-ups or variants of its own")
+		}
+		if strings.TrimSpace(f.To) != "" {
+			return errors.New("a follow-up goes to the same person; leave its 'to' empty")
+		}
+		if f.StatusAudience != nil {
+			return errors.New("follow-ups are for chats, not Status")
+		}
+		if err := f.validateContent(); err != nil {
+			return fmt.Errorf("file %d: %w", i+1, err)
 		}
 	}
 	switch r.UniqueCode {
