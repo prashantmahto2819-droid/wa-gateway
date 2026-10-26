@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
 	name       TEXT NOT NULL DEFAULT '',
 	prefix     TEXT NOT NULL,
 	key_hash   TEXT NOT NULL UNIQUE,
+	sessions   TEXT NOT NULL DEFAULT '[]',   -- numbers this key may use ([] = every number of the account)
 	created_at INTEGER NOT NULL,
 	last_used  INTEGER NOT NULL DEFAULT 0
 );
@@ -504,6 +505,7 @@ func migrate2(db *sql.DB) error {
 		{"campaigns", "gap_max", "INTEGER NOT NULL DEFAULT 0"},
 		{"autoreplies", "source", "TEXT NOT NULL DEFAULT 'manual'"},
 		{"gw_sessions", "proxy_id", "INTEGER NOT NULL DEFAULT 0"},
+		{"api_keys", "sessions", "TEXT NOT NULL DEFAULT '[]'"},
 	}
 	for _, a := range adds {
 		if err := addColumn(db, a.table, a.col, a.def); err != nil {

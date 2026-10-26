@@ -390,7 +390,7 @@ func (a *API) session(w http.ResponseWriter, r *http.Request) *Session {
 	if err == nil {
 		// Everyone, super admin included, works only on their own numbers here;
 		// support actions on a customer's number live under /api/admin/numbers.
-		if p := principalOf(r); p != nil && !p.Master && s.owner() != p.UserID {
+		if p := principalOf(r); !p.canUse(s) {
 			err = errNoSession // don't reveal other customers' numbers
 		}
 	}
@@ -801,7 +801,7 @@ func (a *API) doEnqueue(w http.ResponseWriter, r *http.Request, pool []string, b
 			continue
 		}
 		s, err := a.m.get(n)
-		if err != nil || (!p.Admin() && s.owner() != p.UserID) {
+		if err != nil || !p.canUse(s) {
 			writeErr(w, http.StatusNotFound, "session_not_found", errors.New("unknown session in pool: "+n))
 			return
 		}

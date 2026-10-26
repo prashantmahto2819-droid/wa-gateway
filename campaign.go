@@ -268,7 +268,7 @@ func (a *API) campaignFromRequest(r *http.Request, p *Principal, c *Campaign) er
 	}
 	for _, n := range c.Sessions {
 		s, err := a.m.get(n)
-		if err != nil || (!p.Admin() && s.owner() != p.UserID) {
+		if err != nil || !p.canUse(s) {
 			return fmt.Errorf("number %q not found", n)
 		}
 	}
@@ -394,7 +394,7 @@ func (a *API) createCampaign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.campaignFromRequest(r, p, &c); err != nil {
-		a.fail(w, err)
+		writeErr(w, http.StatusBadRequest, "bad_request", err)
 		return
 	}
 	now := time.Now()
@@ -463,7 +463,7 @@ func (a *API) updateCampaign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.campaignFromRequest(r, principalOf(r), &c); err != nil {
-		a.fail(w, err)
+		writeErr(w, http.StatusBadRequest, "bad_request", err)
 		return
 	}
 	status, next := old.Status, firstRun(c.Schedule, time.Now())

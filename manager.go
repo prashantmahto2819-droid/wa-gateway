@@ -161,7 +161,7 @@ func (m *Manager) listFor(p *Principal) []*Session {
 	}
 	out := all[:0:0]
 	for _, s := range all {
-		if s.owner() == p.UserID {
+		if p.canUse(s) {
 			out = append(out, s)
 		}
 	}

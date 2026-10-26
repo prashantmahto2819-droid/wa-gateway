@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -124,7 +125,7 @@ func (a *API) redeemLicence(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) listKeys(w http.ResponseWriter, r *http.Request) {
 	p := principalOf(r)
-	rows, err := a.m.db.QueryContext(r.Context(), `SELECT id, name, prefix, created_at, last_used FROM api_keys WHERE user_id=? ORDER BY id DESC`, p.UserID)
+	rows, err := a.m.db.QueryContext(r.Context(), `SELECT id, name, prefix, sessions, created_at, last_used FROM api_keys WHERE user_id=? ORDER BY id DESC`, p.UserID)
 	if err != nil {
 		a.fail(w, err)
 		return
@@ -133,9 +134,14 @@ func (a *API) listKeys(w http.ResponseWriter, r *http.Request) {
 	out := []map[string]any{}
 	for rows.Next() {
 		var id, created, used int64
-		var name, prefix string
-		if rows.Scan(&id, &name, &prefix, &created, &used) == nil {
-			out = append(out, map[string]any{"id": id, "name": name, "prefix": prefix, "created_at": created, "last_used": used})
+		var name, prefix, scope string
+		if rows.Scan(&id, &name, &prefix, &scope, &created, &used) == nil {
+			names := fromJSON[[]string](scope)
+			if names == nil {
+				names = []string{}
+			}
+			out = append(out, map[string]any{"id": id, "name": name, "prefix": prefix, "sessions": names,
+				"created_at": created, "last_used": used})
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "keys": out})
@@ -153,8 +159,22 @@ func (a *API) createKey(w http.ResponseWriter, r *http.Request) {
 	}
 	var b struct {
 		Name string `json:"name"`
+		// The numbers this key may use. Empty means every number of the account — and
+		// every number it links later, which is why the dashboard asks you to choose.
+		Sessions []string `json:"sessions"`
 	}
 	_ = decode(r, &b)
+	scope := []string{}
+	for _, n := range b.Sessions {
+		s, err := a.m.get(n)
+		if err != nil || !p.canUse(s) {
+			writeErr(w, http.StatusBadRequest, "bad_request", errors.New("number not found: "+n))
+			return
+		}
+		if !slices.Contains(scope, n) {
+			scope = append(scope, n)
+		}
+	}
 	var n int
 	_ = a.m.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM api_keys WHERE user_id=?`, p.UserID).Scan(&n)
 	if n >= 20 {
@@ -164,8 +184,8 @@ func (a *API) createKey(w http.ResponseWriter, r *http.Request) {
 	secret := "vr_" + randToken(24)
 	prefix := secret[:7]
 	now := time.Now().Unix()
-	res, err := a.m.db.ExecContext(r.Context(), `INSERT INTO api_keys(user_id, name, prefix, key_hash, created_at) VALUES(?,?,?,?,?)`,
-		p.UserID, truncate(strings.TrimSpace(b.Name), 60), prefix, sha(secret), now)
+	res, err := a.m.db.ExecContext(r.Context(), `INSERT INTO api_keys(user_id, name, prefix, key_hash, sessions, created_at) VALUES(?,?,?,?,?,?)`,
+		p.UserID, truncate(strings.TrimSpace(b.Name), 60), prefix, sha(secret), jsonText(scope), now)
 	if err != nil {
 		a.fail(w, err)
 		return
@@ -173,7 +193,7 @@ func (a *API) createKey(w http.ResponseWriter, r *http.Request) {
 	id, _ := res.LastInsertId()
 	audit(r.Context(), a.m.db, p.ActorID, clientIP(r), "apikey.create", b.Name)
 	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "secret": secret,
-		"key": map[string]any{"id": id, "name": b.Name, "prefix": prefix, "created_at": now, "last_used": 0}})
+		"key": map[string]any{"id": id, "name": b.Name, "prefix": prefix, "sessions": scope, "created_at": now, "last_used": 0}})
 }
 
 func (a *API) deleteKey(w http.ResponseWriter, r *http.Request) {

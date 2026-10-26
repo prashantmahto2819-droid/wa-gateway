@@ -1,4 +1,4 @@
-import { api, html, raw, ic, t, relTime, pill, skel, empty, modal, confirmBox, toast, copy, $$, esc } from '/static/app/core.js';
+import { api, html, raw, ic, t, relTime, pill, skel, empty, modal, confirmBox, toast, copy, getSessions, sessionName, $$, esc } from '/static/app/core.js';
 
 export const EVENTS = ['*', 'message', 'message.receipt', 'message.deleted', 'poll.vote', 'call', 'queue.status', 'campaign.status', 'session.status', 'session.paired', 'session.timelock', 'session.health', 'contact.optout', 'contact.optin', 'group.update'];
 
@@ -29,12 +29,14 @@ if (sig !== req.headers['x-signature']) return res.status(401).end();`)}
         <p class="hint">${t('YOUR_NUMBER is the internal name shown under Numbers → More.')}</p></div></section>
     </div></div>`.s;
 
+  let sessions = [];
   async function loadKeys() {
-    const j = await api('GET', '/api/keys', undefined, { silent: true });
+    const [j] = await Promise.all([api('GET', '/api/keys', undefined, { silent: true }), getSessions().then((x) => (sessions = x || []))]);
     if (!ctx.isCurrent()) return;
     const l = j.ok ? j.keys || [] : [];
-    root.querySelector('[data-keys]').innerHTML = l.length ? html`<div class="table-wrap"><table class="t"><thead><tr><th>${t('Name')}</th><th>${t('Key')}</th><th>${t('Created')}</th><th>${t('Last used')}</th><th class="act"></th></tr></thead><tbody>
-      ${l.map((k) => html`<tr><td class="cell-main">${k.name}</td><td class="mono">${k.prefix}…</td><td class="cell-sub">${relTime(k.created_at)}</td><td class="cell-sub">${k.last_used ? relTime(k.last_used) : t('never')}</td>
+    root.querySelector('[data-keys]').innerHTML = l.length ? html`<div class="table-wrap"><table class="t"><thead><tr><th>${t('Name')}</th><th>${t('Key')}</th><th>${t('Numbers')}</th><th>${t('Created')}</th><th>${t('Last used')}</th><th class="act"></th></tr></thead><tbody>
+      ${l.map((k) => html`<tr><td class="cell-main">${k.name}</td><td class="mono">${k.prefix}…</td>
+        <td class="cell-sub">${(k.sessions || []).length ? (k.sessions || []).map((n) => sessions.find((s) => s.name === n)?.label || n).join(', ') : pill(t('every number'), 'warn')}</td><td class="cell-sub">${relTime(k.created_at)}</td><td class="cell-sub">${k.last_used ? relTime(k.last_used) : t('never')}</td>
         <td class="act"><button class="btn sm danger" data-revoke="${k.id}">${t('Revoke')}</button></td></tr>`)}</tbody></table></div>`.s
       : empty('key', t('No API keys'), t('Create a key for each app that sends through Vivid Relay, so you can revoke one without breaking the others.')).s;
   }
@@ -79,11 +81,18 @@ if (sig !== req.headers['x-signature']) return res.status(401).end();`)}
   root.addEventListener('click', async (e) => {
     const a = e.target.closest('[data-a]')?.dataset.a;
     if (a === 'newkey') {
-      const m = modal({ title: t('Create API key'), size: 'sm', body: html`<form class="stack"><label class="field"><span>${t('Name (where you will use it)')}</span><input name="name" required placeholder="${t('My website')}" autofocus></label><div data-out></div></form>`,
+      const m = modal({ title: t('Create API key'), size: 'sm', body: html`<form class="stack">
+          <label class="field"><span>${t('Name (where you will use it)')}</span><input name="name" required placeholder="${t('My website')}" autofocus></label>
+          <fieldset class="panel panel-pad"><legend>${t('This key may use')}</legend>
+            ${sessions.length ? html`<div class="stack" style="gap:4px">${sessions.map((x) => html`<label class="check"><input type="checkbox" name="sess" value="${x.name}" ${sessions.length === 1 ? 'checked' : ''}>${sessionName(x)}${x.phone ? ' · ' + x.phone : ''}</label>`)}</div>
+              <p class="hint">${t('Nothing ticked = every number of this account, including ones you link later. Tick the one this app should use, so a mistake in that app cannot send from your other numbers.')}</p>`
+              : html`<p class="muted">${t('Link a number first — then a key can be tied to it.')}</p>`}</fieldset>
+          <div data-out></div></form>`,
         footer: html`<button class="btn ghost" data-close>${t('Close')}</button><button class="btn primary" data-ok>${t('Create key')}</button>` });
       const go = async (ev) => {
         ev?.preventDefault(); const f = m.body.querySelector('form'); if (!f.reportValidity()) return;
-        const j = await api('POST', '/api/keys', { name: f.name.value.trim() }); if (!j.ok) return;
+        const picked = [...m.body.querySelectorAll('[name=sess]:checked')].map((x) => x.value);
+        const j = await api('POST', '/api/keys', { name: f.name.value.trim(), sessions: picked }); if (!j.ok) return;
         m.body.querySelector('[data-out]').innerHTML = html`<div class="note warn">${ic('alert', 16)}<span>${t('Copy this key now. For your safety it will not be shown again.')}</span></div><div class="secret mt-s"><span>${j.secret}</span><button type="button" class="btn sm" data-copy>${ic('copy', 14)}${t('Copy')}</button></div>`.s;
         m.body.querySelector('[data-copy]').addEventListener('click', () => copy(j.secret, t('API key copied')));
         m.foot.querySelector('[data-ok]')?.remove(); f.name.disabled = true; loadKeys();

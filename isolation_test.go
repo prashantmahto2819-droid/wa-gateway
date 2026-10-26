@@ -90,3 +90,55 @@ func TestNumbersStayWithTheirOwner(t *testing.T) {
 	}
 	master.ok("GET", "/api/sessions/"+shop, nil)
 }
+
+// An API key can be tied to one number, so a mistake (or a leak) in the app that
+// holds it cannot reach the account's other numbers.
+func TestAPIKeyStaysOnItsNumber(t *testing.T) {
+	env := newTestEnv(t, nil)
+	owner := env.browser()
+	owner.ok("POST", "/auth/setup", map[string]any{"api_key": testKey, "name": "Owner", "email": "o@example.com", "password": "secret123"})
+	shop := owner.ok("POST", "/api/sessions", map[string]any{"name": "shop"})["session"].(map[string]any)["name"].(string)
+	office := owner.ok("POST", "/api/sessions", map[string]any{"name": "office"})["session"].(map[string]any)["name"].(string)
+
+	made := owner.ok("POST", "/api/keys", map[string]any{"name": "website", "sessions": []string{shop}})
+	scoped := env.withKey(made["secret"].(string))
+	if ss := made["key"].(map[string]any)["sessions"].([]any); len(ss) != 1 || ss[0] != shop {
+		t.Fatalf("key scope: %v", made["key"])
+	}
+	// it lists and reaches only its own number
+	list := scoped.ok("GET", "/api/sessions", nil)["sessions"].([]any)
+	if len(list) != 1 || list[0].(map[string]any)["name"] != shop {
+		t.Fatalf("scoped key lists: %v", list)
+	}
+	scoped.ok("GET", "/api/sessions/"+shop, nil)
+	for _, call := range []struct {
+		method, path string
+		body         any
+	}{
+		{"GET", "/api/sessions/" + office, nil},
+		{"POST", "/api/sessions/" + office + "/send", map[string]any{"to": "9811111111", "text": "hi"}},
+		{"PATCH", "/api/sessions/" + office, map[string]any{"label": "x"}},
+		{"GET", "/api/sessions/" + office + "/groups", nil},
+	} {
+		if code, out := scoped.do(call.method, call.path, call.body, true); code != 404 {
+			t.Fatalf("scoped key reached another number: %s %s → %d %v", call.method, call.path, code, out)
+		}
+	}
+	// and it cannot run a campaign from the other number either
+	if code, out := scoped.do("POST", "/api/campaigns", map[string]any{"name": "c", "sessions": []string{office},
+		"message": map[string]any{"text": "hi"}, "audience": map[string]any{"phones": []string{"9811111111"}}}, true); code != 400 && code != 404 {
+		t.Fatalf("scoped key started a campaign on another number: %d %v", code, out)
+	}
+	// a key with nothing ticked keeps the old behaviour: every number of the account
+	wide := env.withKey(owner.ok("POST", "/api/keys", map[string]any{"name": "all"})["secret"].(string))
+	if n := len(wide.ok("GET", "/api/sessions", nil)["sessions"].([]any)); n != 2 {
+		t.Fatalf("unscoped key sees %d numbers", n)
+	}
+	wide.ok("GET", "/api/sessions/"+office, nil)
+	// a key cannot be tied to a number the account does not own
+	biz := env.browser()
+	biz.ok("POST", "/auth/signup", map[string]any{"name": "Biz", "email": "biz@example.com", "password": "secret123"})
+	if code, _ := biz.do("POST", "/api/keys", map[string]any{"name": "steal", "sessions": []string{shop}}, true); code != 400 {
+		t.Fatalf("key tied to someone else's number: %d", code)
+	}
+}

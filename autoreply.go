@@ -438,7 +438,7 @@ func (a *API) saveAutoReply(w http.ResponseWriter, r *http.Request) {
 	}
 	if ar.Session != "" {
 		s, err := a.m.get(ar.Session)
-		if err != nil || (!p.Admin() && s.owner() != p.UserID) {
+		if err != nil || !p.canUse(s) {
 			writeErr(w, http.StatusBadRequest, "bad_request", errors.New("number not found"))
 			return
 		}

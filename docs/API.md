@@ -7,11 +7,13 @@ All JSON. Success: `{"ok": true, ...}`. Error: `{"ok": false, "code": "<stable_c
 
 Three ways, checked in this order:
 
-1. **Master key** — `Authorization: Bearer <API_KEY from .env>` (or `X-API-Key`). Acts as the first super-admin.
-2. **User API key** — `Authorization: Bearer vr_<...>` created in *Developer → API keys*. Acts as that user.
+1. **Master key** — `Authorization: Bearer <API_KEY from .env>` (or `X-API-Key`). The server's own key: it reaches every account's numbers, so automation and support scripts keep working.
+2. **User API key** — `Authorization: Bearer vr_<...>` created in *Developer → API keys*. Acts as that user, and only on the numbers the key was tied to (all of the account's numbers when none were chosen).
 3. **Browser session** — cookie `vr_session` set by `/auth/login`. Mutating requests (POST/PATCH/PUT/DELETE) from the browser must send header `X-Requested-With: vivid` (CSRF guard). The SPA always sends it.
 
-Roles: `superadmin` (everything, sees all users' data, `/api/admin/*`), `user` (only own data).
+Roles: `superadmin` (`/api/admin/*`, plus every account's data in the admin pages), `user` (only own data).
+
+**Numbers belong to one account.** Every logged-in account — the super admin included — can list, send from and configure only its own numbers; anything else answers 404, so another account's number is never even revealed. A customer's number is reachable for support in `/api/admin/numbers` (reconnect, pause / resume — no sending, no chats). Only the `.env` master key crosses accounts.
 Unauthenticated → 401 `unauthorized`. Forbidden → 403 `forbidden`. Licence problems → 402 `licence_required` / `licence_expired` / 403 `feature_locked` / 429 `limit_reached` (body has `limit` name).
 
 ### Auth endpoints (no auth needed)
@@ -85,7 +87,7 @@ ApiKey    { "id":1, "name":"BizCRT", "prefix":"vr_ab12", "created_at":0, "last_u
 | POST | `/api/me/password` | `{current, new}` |
 | GET | `/api/licence` | `{ok, licence, usage}` |
 | POST | `/api/licence/redeem` | `{key}` → activates a licence key for me; `{ok, licence}` |
-| GET/POST | `/api/keys` | list / create `{name}` → `{ok, key:ApiKey, secret:"vr_…"}` (shown once) |
+| GET/POST | `/api/keys` | list / create `{name, sessions?:["number-name"]}` → `{ok, key:ApiKey, secret:"vr_…"}` (shown once). `sessions` ties the key to those numbers; left out or empty it may use every number of the account, including ones linked later |
 | DELETE | `/api/keys/{id}` | |
 | GET/POST | `/api/webhooks` | list / create `{url, events[]}` → includes full `secret` once |
 | PATCH/DELETE | `/api/webhooks/{id}` | `{url?, events?, active?}` |

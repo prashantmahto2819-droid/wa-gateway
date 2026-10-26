@@ -917,7 +917,7 @@ func (a *API) saveFlow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if f.Session != "" {
-		if s, err := a.m.get(f.Session); err != nil || (!p.Admin() && s.owner() != p.UserID) {
+		if s, err := a.m.get(f.Session); err != nil || !p.canUse(s) {
 			writeErr(w, http.StatusBadRequest, "bad_request", errors.New("number not found"))
 			return
 		}

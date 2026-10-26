@@ -312,7 +312,7 @@ func (a *API) saveWebsite(w http.ResponseWriter, r *http.Request) {
 			rt.Targets = cleanTargets(rt.Targets, a.cfg.DefaultCountryCode)
 			rt.Text = truncate(rt.Text, 4000)
 			if rt.Session != "" {
-				if s, err := a.m.get(rt.Session); err != nil || (!p.Admin() && s.owner() != p.UserID) {
+				if s, err := a.m.get(rt.Session); err != nil || !p.canUse(s) {
 					writeErr(w, http.StatusBadRequest, "bad_request", fmt.Errorf("route %d: number not found", i+1))
 					return
 				}
@@ -624,7 +624,7 @@ func (a *API) createPosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.Session != "" {
-		if s, err := a.m.get(in.Session); err != nil || (!p.Admin() && s.owner() != p.UserID) {
+		if s, err := a.m.get(in.Session); err != nil || !p.canUse(s) {
 			writeErr(w, http.StatusBadRequest, "bad_request", errors.New("number not found"))
 			return
 		}

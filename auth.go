@@ -28,8 +28,38 @@ type Principal struct {
 	Role          string // account role: superadmin | user
 	Email         string
 	Name          string
-	ViaKey        bool // user API key
-	Master        bool // .env API_KEY
+	ViaKey        bool     // user API key
+	Master        bool     // .env API_KEY
+	KeySessions   []string // an API key tied to particular numbers (empty = every number of the workspace)
+}
+
+// canUse is the one rule for "may this caller work with this number": its own
+// workspace's number, and — for an API key tied to particular numbers — one of
+// those. The .env key is the server's own and reaches everything.
+func (p *Principal) canUse(s *Session) bool {
+	if p == nil || s == nil {
+		return false
+	}
+	if p.Master {
+		return true
+	}
+	return s.owner() == p.UserID && p.allows(s.name)
+}
+
+// allows checks a number's name against an API key's own list.
+func (p *Principal) allows(name string) bool {
+	if p == nil {
+		return false
+	}
+	if len(p.KeySessions) == 0 {
+		return true
+	}
+	for _, n := range p.KeySessions {
+		if n == name {
+			return true
+		}
+	}
+	return false
 }
 
 // asWorkspace fills the workspace fields for a logged-in user.
@@ -242,11 +272,13 @@ func (a *API) resolvePrincipal(r *http.Request) (*Principal, error) {
 		}
 		if strings.HasPrefix(key, "vr_") {
 			var uid, kid int64
-			if a.m.db.QueryRowContext(ctx, `SELECT id, user_id FROM api_keys WHERE key_hash=?`, sha(key)).Scan(&kid, &uid) == nil {
+			var scope string
+			if a.m.db.QueryRowContext(ctx, `SELECT id, user_id, sessions FROM api_keys WHERE key_hash=?`, sha(key)).Scan(&kid, &uid, &scope) == nil {
 				u, err := getUser(ctx, a.m.db, uid)
 				if err == nil && u.Status == "active" {
 					_, _ = a.m.db.ExecContext(ctx, `UPDATE api_keys SET last_used=? WHERE id=?`, time.Now().Unix(), kid)
-					return (&Principal{UserID: u.ID, Role: u.Role, Email: u.Email, Name: u.Name, ViaKey: true}).asWorkspace(ctx, a.m.db), nil
+					pr := &Principal{UserID: u.ID, Role: u.Role, Email: u.Email, Name: u.Name, ViaKey: true, KeySessions: fromJSON[[]string](scope)}
+					return pr.asWorkspace(ctx, a.m.db), nil
 				}
 			}
 		}

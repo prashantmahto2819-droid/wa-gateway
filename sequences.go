@@ -496,7 +496,7 @@ func (a *API) saveSequence(w http.ResponseWriter, r *http.Request) {
 		st.Message = truncate(st.Message, 4000)
 	}
 	if s.Session != "" {
-		if x, err := a.m.get(s.Session); err != nil || (!p.Admin() && x.owner() != p.UserID) {
+		if x, err := a.m.get(s.Session); err != nil || !p.canUse(x) {
 			writeErr(w, http.StatusBadRequest, "bad_request", errors.New("number not found"))
 			return
 		}

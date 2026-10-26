@@ -563,7 +563,7 @@ func (a *API) applyKit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.Session != "" {
-		if s, err := a.m.get(in.Session); err != nil || (!p.Admin() && s.owner() != p.UserID) {
+		if s, err := a.m.get(in.Session); err != nil || !p.canUse(s) {
 			writeErr(w, http.StatusBadRequest, "bad_request", errors.New("number not found"))
 			return
 		}
