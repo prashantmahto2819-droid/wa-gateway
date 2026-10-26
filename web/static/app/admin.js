@@ -1,12 +1,12 @@
 import { api, html, raw, ic, t, fmtNum, fmtDate, relTime, pill, skel, empty, modal, confirmBox, promptBox, toast, copy, formData, toggle, debounce, $$ } from '/static/app/core.js';
 import { FEATURES, planLimits } from '/static/app/licence.js';
 
-const TITLES = { overview: 'Admin overview', users: 'Users', plans: 'Plans', licences: 'Licences', activations: 'Activations', settings: 'Site settings', inbox: 'Inbox', server: 'Licence server', audit: 'Audit log', proxies: 'Proxy pool' };
+const TITLES = { overview: 'Admin overview', users: 'Users', plans: 'Plans', licences: 'Licences', activations: 'Activations', settings: 'Site settings', inbox: 'Inbox', server: 'Licence server', audit: 'Audit log', proxies: 'Proxy pool', numbers: 'Numbers of every account' };
 
 export async function render(ctx) {
   const v = ctx.params.view || 'overview';
   ctx.setTitle(t(TITLES[v]), html`<a href="/app/admin" data-link>${t('Admin')}</a> ${ic('chevron', 14)} <span>${t(TITLES[v])}</span>`);
-  const fn = { overview, users, plans, licences, activations, settings, inbox, server, audit, proxies }[v];
+  const fn = { overview, users, plans, licences, activations, settings, inbox, server, audit, proxies, numbers }[v];
   ctx.root.innerHTML = html`<div class="page"><div class="page-head"><div><h1>${t(TITLES[v])}</h1><p data-sub></p></div><div class="page-actions" data-actions></div></div><div data-body>${skel(6)}</div></div>`.s;
   await fn(ctx, ctx.root.querySelector('[data-body]'), ctx.root.querySelector('[data-actions]'), ctx.root.querySelector('[data-sub]'));
 }
@@ -346,4 +346,42 @@ async function proxies(ctx, body, actions, sub) {
   });
   body.addEventListener('change', async (e) => { if (e.target.name === 'own_allowed') { if ((await api('POST', '/api/admin/proxies/settings', { own_allowed: e.target.checked })).ok) toast(t('Saved')); } });
   load();
+}
+
+// ------------------------------------------------------------------ every account's numbers
+// Customers' numbers are not mixed into the super admin's own Numbers page; they are here,
+// against their owner. Only what support needs: reconnect a dropped number, pause / resume it.
+async function numbers(ctx, body, actions, sub) {
+  sub.textContent = t('Every WhatsApp number on this server, with the account it belongs to. You cannot send from someone else’s number or read their chats from here.');
+  actions.innerHTML = html`<button class="btn" data-a="refresh">${ic('refresh', 16)}${t('Refresh')}</button>`.s;
+  async function load() {
+    const j = await api('GET', '/api/admin/numbers');
+    if (!ctx.isCurrent() || !j.ok) return;
+    const list = j.numbers || [];
+    const mine = [], others = [];
+    for (const n of list) ((n.owner_id === ctx.me.user.id) ? mine : others).push(n);
+    const row = (n) => html`<li><span class="list-ico">${ic('phone')}</span>
+      <span class="li-main"><b>${n.label}</b><small>${n.phone ? fmtPhone(n.phone) : t('not linked')} · ${n.owner ? (n.owner.name || n.owner.email) : t('unknown owner')}${n.owner && n.owner.name ? ' (' + n.owner.email + ')' : ''} · ${t('{a} of {b} today', { a: fmtNum(n.sent_today), b: fmtNum(n.limit) })}${n.pause_reason ? ' · ' + n.pause_reason : ''}${n.error ? ' · ' + n.error : ''}</small></span>
+      ${pill(t(n.status), n.status === 'connected' ? 'ok' : n.status === 'outdated' ? 'bad' : 'muted')}
+      ${n.paused ? pill(t('queue paused'), 'warn') : ''}
+      <button class="btn sm" data-act="reconnect" data-n="${n.name}">${ic('refresh', 14)}${t('Reconnect')}</button>
+      <button class="btn sm" data-act="${n.paused ? 'resume' : 'pause'}" data-n="${n.name}">${ic(n.paused ? 'play' : 'pause', 14)}${n.paused ? t('Resume') : t('Pause')}</button></li>`;
+    body.innerHTML = list.length ? html`
+      <section class="panel"><div class="panel-head"><h2>${t('Customers’ numbers')} <span class="badge">${others.length}</span></h2></div>
+        ${others.length ? html`<ul class="list">${others.map(row)}</ul>` : html`<div class="panel-body"><p class="muted">${t('No other account has linked a number yet.')}</p></div>`}</section>
+      <section class="panel mt"><div class="panel-head"><h2>${t('My own numbers')} <span class="badge">${mine.length}</span></h2></div>
+        ${mine.length ? html`<ul class="list">${mine.map(row)}</ul>` : html`<div class="panel-body"><p class="muted">${t('You have not linked a number yourself.')}</p></div>`}
+        <div class="panel-foot"><a class="btn sm" href="/app/numbers" data-link>${t('Open my Numbers page')}</a></div></section>`.s
+      : empty('phone', t('No numbers yet'), t('Numbers appear here as soon as any account links one.')).s;
+  }
+  ctx.root.addEventListener('click', async (e) => {
+    if (e.target.closest('[data-a="refresh"]')) return load();
+    const b = e.target.closest('[data-act]');
+    if (!b) return;
+    b.classList.add('busy');
+    const j = await api('POST', `/api/admin/numbers/${encodeURIComponent(b.dataset.n)}/${b.dataset.act}`);
+    b.classList.remove('busy');
+    if (j.ok) { toast(t('Done')); load(); }
+  });
+  await load();
 }

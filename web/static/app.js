@@ -28,7 +28,7 @@ const ROUTES = [
   { re: /^\/app\/publisher\/?$/, mod: 'publisher', nav: 'publisher' },
   { re: /^\/app\/flows\/?$/, mod: 'flows', nav: 'flows' },
   { re: /^\/app\/admin\/?$/, mod: 'admin', nav: 'admin', view: 'overview', admin: true },
-  { re: /^\/app\/admin\/(users|plans|licences|activations|settings|inbox|server|audit|proxies)\/?$/, mod: 'admin', nav: 'admin-$1', keys: ['view'], admin: true },
+  { re: /^\/app\/admin\/(users|plans|licences|activations|settings|inbox|server|audit|proxies|numbers)\/?$/, mod: 'admin', nav: 'admin-$1', keys: ['view'], admin: true },
 ];
 
 const NAV = [
@@ -69,6 +69,7 @@ const ADMIN_NAV = { group: 'Admin', items: [
   ['admin-activations', '/app/admin/activations', 'server', 'Activations'],
   ['admin-inbox', '/app/admin/inbox', 'inbox', 'Inbox'],
   ['admin-audit', '/app/admin/audit', 'log', 'Audit log'],
+  ['admin-numbers', '/app/admin/numbers', 'phone', 'All numbers'],
   ['admin-proxies', '/app/admin/proxies', 'globe', 'Proxy pool'],
   ['admin-settings', '/app/admin/settings', 'settings', 'Site settings'],
   ['admin-server', '/app/admin/server', 'globe', 'Licence server'],

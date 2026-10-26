@@ -148,9 +148,15 @@ func (m *Manager) reloadOwners() {
 }
 
 // listFor returns the sessions a user may see.
+// listFor is the numbers one account works with: its own. A logged-in super
+// admin is no exception — other customers' numbers would otherwise sit in the
+// same Numbers page and the same Send picker as their own, with nothing to tell
+// them apart, and a campaign could go out from a customer's WhatsApp by mistake.
+// Those numbers are listed in Admin → Numbers instead. Only the server's own
+// .env key (Master) still sees every number, because automation runs on it.
 func (m *Manager) listFor(p *Principal) []*Session {
 	all := m.list()
-	if p.Admin() {
+	if p.Master {
 		return all
 	}
 	out := all[:0:0]

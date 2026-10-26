@@ -207,9 +207,14 @@ func TestV2AccountsLicencesAndIsolation(t *testing.T) {
 	if code, _ := bob.do("GET", "/api/admin/users", nil, true); code != 403 {
 		t.Fatalf("bob admin: %d", code)
 	}
-	// Owner sees everything.
-	if n := len(owner.ok("GET", "/api/sessions", nil)["sessions"].([]any)); n != 1 {
-		t.Fatalf("owner sees %d sessions", n)
+	// The super admin's own pages show only their own numbers (none here) — a customer's
+	// number is visible for support in Admin → Numbers, against its owner.
+	if n := len(owner.ok("GET", "/api/sessions", nil)["sessions"].([]any)); n != 0 {
+		t.Fatalf("owner sees %d of their own sessions", n)
+	}
+	admNums := owner.ok("GET", "/api/admin/numbers", nil)["numbers"].([]any)
+	if len(admNums) != 1 || admNums[0].(map[string]any)["owner"].(map[string]any)["email"] != "alice@example.com" {
+		t.Fatalf("admin numbers: %v", admNums)
 	}
 
 	// Admin creates a licence key; Alice redeems it; the trial ends.

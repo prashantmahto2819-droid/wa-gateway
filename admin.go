@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"go.mau.fi/whatsmeow/types"
 )
 
 func (a *API) adminOnly(h http.HandlerFunc) http.HandlerFunc {
@@ -583,4 +586,82 @@ func (a *API) adminAudit(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "entries": out})
+}
+
+// ---------------------------------------------------------------- numbers of every customer
+//
+// A customer's WhatsApp number does not appear in the super admin's own Numbers
+// page any more (manager.listFor) — it is listed here, against its owner, and
+// only the two actions support actually needs are offered: reconnect a number
+// that dropped, and pause / resume its queue. Sending from a customer's number,
+// reading their chats or unlinking it is deliberately not possible from here.
+func (a *API) adminNumbers(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	owners := map[int64]map[string]any{}
+	rows, err := a.m.db.QueryContext(ctx, `SELECT id, email, name FROM users`)
+	if err == nil {
+		for rows.Next() {
+			var id int64
+			var email, name string
+			if rows.Scan(&id, &email, &name) == nil {
+				owners[id] = map[string]any{"id": id, "email": email, "name": name}
+			}
+		}
+		rows.Close()
+	}
+	out := []map[string]any{}
+	for _, s := range a.m.list() {
+		row := s.row(ctx)
+		s.mu.Lock()
+		st, lastErr := s.status, s.lastErr
+		s.mu.Unlock()
+		sent, _ := countSentSince(ctx, a.m.db, s.name, dayStart(time.Now()), false)
+		var label string
+		_ = a.m.db.QueryRowContext(ctx, `SELECT label FROM gw_sessions WHERE name=?`, s.name).Scan(&label)
+		if label == "" {
+			label = s.name
+		}
+		out = append(out, map[string]any{
+			"name": s.name, "label": label, "status": st, "error": lastErr,
+			"phone":  strings.SplitN(strings.SplitN(row.jid, "@", 2)[0], ":", 2)[0],
+			"paused": row.paused, "pause_reason": row.pauseReason, "linked_at": row.pairedAt,
+			"sent_today": sent, "limit": s.effectiveDailyLimit(ctx, row.pairedAt),
+			"health": s.health(ctx, row), "owner": owners[s.owner()], "owner_id": s.owner(),
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "numbers": out})
+}
+
+func (a *API) adminNumberAction(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	s, err := a.m.get(r.PathValue("name"))
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	action := path.Base(r.URL.Path)
+	switch action {
+	case "reconnect":
+		row := s.row(ctx)
+		jid, perr := types.ParseJID(row.jid)
+		if row.jid == "" || perr != nil {
+			writeErr(w, http.StatusConflict, "not_linked", errors.New("this number is not linked — its owner has to scan a QR"))
+			return
+		}
+		if err := s.connectExisting(ctx, jid); err != nil {
+			a.fail(w, err)
+			return
+		}
+	case "pause":
+		_, _ = a.m.db.ExecContext(ctx, `UPDATE gw_sessions SET paused=1, pause_reason='paused by admin' WHERE name=?`, s.name)
+		s.poke()
+	case "resume":
+		_, _ = a.m.db.ExecContext(ctx, `UPDATE gw_sessions SET paused=0, pause_reason='', health_since=? WHERE name=?`, time.Now().Unix(), s.name)
+		s.poke()
+	default:
+		writeErr(w, http.StatusBadRequest, "bad_request", errors.New("unknown action"))
+		return
+	}
+	audit(ctx, a.m.db, principalOf(r).ActorID, clientIP(r), "number."+action, s.name)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

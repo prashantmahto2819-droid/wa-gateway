@@ -226,6 +226,10 @@ func (a *API) routes() http.Handler {
 
 	// Admin
 	mux.HandleFunc("GET /api/admin/overview", admin(a.adminOverview))
+	mux.HandleFunc("GET /api/admin/numbers", admin(a.adminNumbers))
+	mux.HandleFunc("POST /api/admin/numbers/{name}/reconnect", admin(a.adminNumberAction))
+	mux.HandleFunc("POST /api/admin/numbers/{name}/pause", admin(a.adminNumberAction))
+	mux.HandleFunc("POST /api/admin/numbers/{name}/resume", admin(a.adminNumberAction))
 	mux.HandleFunc("GET /api/admin/proxies", admin(a.adminProxies))
 	mux.HandleFunc("POST /api/admin/proxies", admin(a.adminSaveProxy))
 	mux.HandleFunc("POST /api/admin/proxies/settings", admin(a.adminProxySettings))
@@ -384,7 +388,9 @@ func decode(r *http.Request, v any) error {
 func (a *API) session(w http.ResponseWriter, r *http.Request) *Session {
 	s, err := a.m.get(r.PathValue("name"))
 	if err == nil {
-		if p := principalOf(r); p != nil && !p.Admin() && s.owner() != p.UserID {
+		// Everyone, super admin included, works only on their own numbers here;
+		// support actions on a customer's number live under /api/admin/numbers.
+		if p := principalOf(r); p != nil && !p.Master && s.owner() != p.UserID {
 			err = errNoSession // don't reveal other customers' numbers
 		}
 	}
@@ -915,7 +921,7 @@ func (a *API) queueItem(w http.ResponseWriter, r *http.Request) {
 	p := principalOf(r)
 	q := `SELECT id, session, campaign, to_addr, status, error, wa_id, attempts, created_at, sent_at FROM gw_outbox WHERE id=?`
 	args := []any{r.PathValue("id")}
-	if !p.Admin() {
+	if !p.Master {
 		q += ` AND owner_id=?`
 		args = append(args, p.UserID)
 	}
@@ -931,7 +937,7 @@ func (a *API) queueItem(w http.ResponseWriter, r *http.Request) {
 func (a *API) campaignStatsByLabel(w http.ResponseWriter, r *http.Request) {
 	p := principalOf(r)
 	where, arg := "campaign=? AND owner_id="+strconv.FormatInt(p.UserID, 10), any(r.PathValue("campaign"))
-	if p.Admin() {
+	if p.Master {
 		where = "campaign=?"
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "campaign": r.PathValue("campaign"),
@@ -942,7 +948,7 @@ func (a *API) cancelCampaignByLabel(w http.ResponseWriter, r *http.Request) {
 	p := principalOf(r)
 	q := `UPDATE gw_outbox SET status='cancelled' WHERE campaign=? AND status='queued'`
 	args := []any{r.PathValue("campaign")}
-	if !p.Admin() {
+	if !p.Master {
 		q += ` AND owner_id=?`
 		args = append(args, p.UserID)
 	}
