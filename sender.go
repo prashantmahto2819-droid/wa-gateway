@@ -62,7 +62,10 @@ func isPermanent(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, errNotOnWA) || errors.Is(err, errDupStatus) {
+	// whatsmeow now says so itself when the server has no LID for a number:
+	// there is nobody to deliver to, so trying again would only waste the day's
+	// allowance on it.
+	if errors.Is(err, errNotOnWA) || errors.Is(err, errDupStatus) || errors.Is(err, whatsmeow.ErrRecipientNotOnWhatsApp) {
 		return true
 	}
 	msg := err.Error()

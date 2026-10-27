@@ -330,7 +330,7 @@ func errStatus(err error) (int, string) {
 		return http.StatusServiceUnavailable, "not_connected"
 	case errors.Is(err, errAlreadyLinked):
 		return http.StatusConflict, "already_linked"
-	case errors.Is(err, errNotOnWA):
+	case errors.Is(err, errNotOnWA), errors.Is(err, whatsmeow.ErrRecipientNotOnWhatsApp):
 		return http.StatusUnprocessableEntity, "not_on_whatsapp"
 	case errors.Is(err, errTimelocked):
 		return http.StatusTooManyRequests, "timelocked"
