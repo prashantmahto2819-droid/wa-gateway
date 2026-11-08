@@ -32,7 +32,7 @@ export async function render(ctx) {
       ${st.tags.map((x) => html`<a href="#" class="nav-item tagnav ${st.tag === x.tag ? 'on' : ''}" data-tag="${x.tag}"><span class="tag">${x.tag}</span><span class="grow"></span><span class="badge">${fmtNum(x.count)}</span></a>`)}
       ${st.tags.length ? '' : html`<p class="cell-sub" style="padding:8px 10px">${t('Tags you add show up here.')}</p>`}`.s;
   }
-  const FILTERS = [['', 'All', 'total'], ['new', 'New this week', 'new'], ['active', 'Active (30 d)', 'active'], ['inactive', 'Silent 90+ d', 'inactive'], ['noname', 'No name', 'noname'], ['duplicates', 'Duplicate names', 'duplicates'], ['untagged', 'Untagged', 'untagged']];
+  const FILTERS = [['', 'All', 'total'], ['new', 'New this week', 'new'], ['active', 'Active (30 d)', 'active'], ['inactive', 'Silent 90+ d', 'inactive'], ['noname', 'No name', 'noname'], ['duplicates', 'Duplicate names', 'duplicates'], ['untagged', 'Untagged', 'untagged'], ['status', 'Status visible', 'status']];
   async function loadStats() {
     const j = await api('GET', '/api/contacts/stats', undefined, { silent: true });
     if (!ctx.isCurrent() || !j.ok) return;

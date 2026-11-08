@@ -538,6 +538,15 @@ func chatType(j types.JID) string {
 func (s *Session) onMessage(ctx context.Context, e *events.Message) {
 	info := e.Info
 	if info.Chat.Server == types.BroadcastServer { // statuses and broadcast lists
+		// A status reaches us only when that person has our number saved and we
+		// have theirs — so it is the one honest sign of a two-way contact. We send
+		// nothing back; the contact is marked, and campaigns can go to that tag.
+		if !info.IsFromMe && info.Chat.User == "status" {
+			s.mu.Lock()
+			cli := s.client
+			s.mu.Unlock()
+			go s.noteStatusSeen(context.WithoutCancel(ctx), phoneOf(s.resolvePN(ctx, cli, info.Sender, info.SenderAlt)), info.PushName)
+		}
 		return
 	}
 	s.mu.Lock()

@@ -1199,6 +1199,7 @@ const HI = {
   "{r} at {b}": "{b} में {r}",
   "Ravi Sharma": "रवि शर्मा",
   "Sales": "Sales",
+  "Status visible": "Status दिखते हैं",
   "Headers": "Headers",
   "Add header": "Header जोड़ें",
   "value": "मान",

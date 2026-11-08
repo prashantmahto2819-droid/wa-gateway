@@ -27,15 +27,18 @@ type Contact struct {
 	CreatedAt int64             `json:"created_at"`
 	UpdatedAt int64             `json:"updated_at"`
 	LastSeen  int64             `json:"last_seen"`
+	// StatusSeen: when this number last saw a status from them — the sign that
+	// the two of you have each other saved. Campaigns target the status-seen tag.
+	StatusSeen int64 `json:"status_seen"`
 }
 
-const contactCols = `c.id, c.phone, c.name, c.email, c.tags, c.notes, c.custom, c.source, c.created_at, c.updated_at, c.last_seen,
+const contactCols = `c.id, c.phone, c.name, c.email, c.tags, c.notes, c.custom, c.source, c.created_at, c.updated_at, c.last_seen, c.status_seen,
 	EXISTS(SELECT 1 FROM optouts o WHERE o.owner_id=c.owner_id AND o.phone=c.phone)`
 
 func scanContact(row interface{ Scan(...any) error }) (*Contact, error) {
 	var c Contact
 	var tags, custom string
-	if err := row.Scan(&c.ID, &c.Phone, &c.Name, &c.Email, &tags, &c.Notes, &custom, &c.Source, &c.CreatedAt, &c.UpdatedAt, &c.LastSeen, &c.OptedOut); err != nil {
+	if err := row.Scan(&c.ID, &c.Phone, &c.Name, &c.Email, &tags, &c.Notes, &custom, &c.Source, &c.CreatedAt, &c.UpdatedAt, &c.LastSeen, &c.StatusSeen, &c.OptedOut); err != nil {
 		return nil, err
 	}
 	c.Tags = unpackTags(tags)
@@ -66,9 +69,9 @@ func upsertContact(ctx context.Context, db *sql.DB, owner int64, c *Contact, mer
 	var oldTags, oldCustom string
 	err = db.QueryRowContext(ctx, `SELECT id, tags, custom FROM contacts WHERE owner_id=? AND phone=?`, owner, c.Phone).Scan(&id, &oldTags, &oldCustom)
 	if errors.Is(err, sql.ErrNoRows) {
-		_, err = db.ExecContext(ctx, `INSERT INTO contacts(owner_id, phone, name, email, tags, notes, custom, source, created_at, updated_at, last_seen)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?)`, owner, c.Phone, truncate(c.Name, 120), truncate(c.Email, 200), packTags(c.Tags),
-			truncate(c.Notes, 2000), jsonText(c.Custom), c.Source, now, now, c.LastSeen)
+		_, err = db.ExecContext(ctx, `INSERT INTO contacts(owner_id, phone, name, email, tags, notes, custom, source, created_at, updated_at, last_seen, status_seen)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, owner, c.Phone, truncate(c.Name, 120), truncate(c.Email, 200), packTags(c.Tags),
+			truncate(c.Notes, 2000), jsonText(c.Custom), c.Source, now, now, c.LastSeen, c.StatusSeen)
 		return err == nil, err
 	}
 	if err != nil {
@@ -152,6 +155,8 @@ func (a *API) listContacts(w http.ResponseWriter, r *http.Request) {
 		where = append(where, "TRIM(c.email)=''")
 	case "untagged":
 		where = append(where, "(c.tags='' OR c.tags=',')")
+	case "status": // they post statuses this number can see: you both have each other saved
+		where = append(where, "c.status_seen>0")
 	}
 	w2 := strings.Join(where, " AND ")
 	var total int
@@ -183,6 +188,7 @@ func (a *API) contactStats(w http.ResponseWriter, r *http.Request) {
 		"noname":     `SELECT COUNT(*) FROM contacts c WHERE c.owner_id=? AND TRIM(c.name)=''`,
 		"duplicates": `SELECT COUNT(*) FROM contacts c WHERE c.owner_id=? AND TRIM(c.name)<>'' AND LOWER(TRIM(c.name)) IN (SELECT LOWER(TRIM(d.name)) FROM contacts d WHERE d.owner_id=c.owner_id AND TRIM(d.name)<>'' GROUP BY LOWER(TRIM(d.name)) HAVING COUNT(*)>1)`,
 		"untagged":   `SELECT COUNT(*) FROM contacts c WHERE c.owner_id=? AND (c.tags='' OR c.tags=',')`,
+		"status":     `SELECT COUNT(*) FROM contacts c WHERE c.owner_id=? AND c.status_seen>0`,
 		"opted_out":  `SELECT COUNT(*) FROM optouts o WHERE o.owner_id=?`,
 	} {
 		var n int
@@ -727,6 +733,38 @@ func csvSafe(s string) string {
 }
 
 // autoSaveContact records people who message a number (if enabled for the number).
+// statusTag marks the people whose status this number can see. Campaigns can be
+// sent to it like any other tag, and it stays current by itself.
+const statusTag = "status-seen"
+
+// noteStatusSeen records that this person posted a status we could see. It writes
+// at most once a day per person: on a phone with tens of thousands of contacts,
+// every status would otherwise be a database write.
+func (s *Session) noteStatusSeen(ctx context.Context, phone, pushName string) {
+	if phone == "" {
+		return
+	}
+	owner := s.owner()
+	now := time.Now().Unix()
+	var id, seen int64
+	err := s.m.db.QueryRowContext(ctx, `SELECT id, status_seen FROM contacts WHERE owner_id=? AND phone=?`, owner, phone).Scan(&id, &seen)
+	if err == nil {
+		if now-seen < 20*3600 {
+			return
+		}
+		_, _ = s.m.db.ExecContext(ctx, `UPDATE contacts SET status_seen=?, updated_at=? WHERE id=?`, now, now, id)
+		s.m.retag(ctx, owner, phone, []string{statusTag}, nil)
+		return
+	}
+	// Someone not in Contacts yet: add them only if this number saves contacts
+	// by itself, which is the choice already made in the number's settings.
+	if !s.settings(ctx).AutoSaveContacts || s.m.lic.checkLimit(ctx, owner, "contacts", 1) != nil {
+		return
+	}
+	c := &Contact{Phone: phone, Name: pushName, Source: "status", Tags: []string{statusTag}, StatusSeen: now}
+	_, _ = upsertContact(ctx, s.m.db, owner, c, true)
+}
+
 func (s *Session) autoSaveContact(ctx context.Context, phone, pushName string) {
 	if phone == "" {
 		return

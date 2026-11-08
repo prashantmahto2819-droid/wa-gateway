@@ -170,7 +170,7 @@ The send result carries `then: [{id} | {error}]`. If the main message was sent, 
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/api/contacts?q=&tag=&opted_out=&source=&filter=&page=1&limit=50` | `{ok, contacts:[Contact], total, page, limit}`. `filter`: `new` (7 days), `active` (wrote in 30 days), `inactive` (silent 90+ days), `noname`, `duplicates` (same name on several numbers), `untagged`, `noemail` |
+| GET | `/api/contacts?q=&tag=&opted_out=&source=&filter=&page=1&limit=50` | `{ok, contacts:[Contact], total, page, limit}`. `filter`: `new` (7 days), `active` (wrote in 30 days), `inactive` (silent 90+ days), `noname`, `duplicates` (same name on several numbers), `untagged`, `noemail`, `status` (their WhatsApp status is visible to this number) |
 | POST | `/api/contacts` | Contact fields (phone required) → upsert by phone |
 | PATCH/DELETE | `/api/contacts/{id}` | |
 | POST | `/api/contacts/bulk` | `{ids[], action:"add_tag|remove_tag|delete|opt_out|opt_in", tag?}` |
@@ -178,6 +178,8 @@ The send result carries `then: [{id} | {error}]`. If the main message was sent, 
 | GET | `/api/contacts/export.csv?tag=` | CSV download |
 | GET | `/api/contacts/tags` | `{ok, tags:[{tag,count}]}` |
 | GET | `/api/contacts/stats` | counts for every smart filter and per source |
+
+**status_seen.** A status reaches a linked number only when that person has its number saved and it has theirs, so it is a two-way contact. Each such contact gets `status_seen` (unix, written at most once a day) and the tag `status-seen`; a campaign aimed at that tag therefore reaches only people who know you. Nothing is ever sent in reply to a status. A person not in Contacts is added only when the number's `auto_save_contacts` setting is on.
 | POST | `/api/contacts/merge` | `{keep:id, remove:[ids]}` — tags, notes, custom fields, follow-ups, renewals and tasks move to `keep`; other numbers kept as `other_phone` |
 | GET | `/api/contacts/export.vcf?tag=&ids=` | vCard 3.0 (UTF-8) for phones / Google Contacts |
 
