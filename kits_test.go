@@ -246,3 +246,34 @@ func TestKitApplySequencesRenewalsForms(t *testing.T) {
 	}
 	resp.Body.Close()
 }
+
+// When each step of a follow-up comes up. The first reply must not wait for a
+// working day: someone who writes in on Sunday is answered on Sunday.
+func TestStepTimeSundayAndLaterDays(t *testing.T) {
+	sunday := time.Date(2026, 11, 8, 6, 40, 0, 0, time.Local) // the day this caught us out
+	if sunday.Weekday() != time.Sunday {
+		t.Fatalf("fixture is not a Sunday: %v", sunday.Weekday())
+	}
+	if got := stepTime(sunday, KitStep{Day: 0}, true); !got.Equal(sunday) {
+		t.Fatalf("day-0 step on a Sunday was pushed to %v", got)
+	}
+	if got := stepTime(sunday, KitStep{Day: 0}, false); !got.Equal(sunday) {
+		t.Fatalf("day-0 step moved: %v", got)
+	}
+	// day 1 from Sunday is Monday 10:30 either way
+	mon := stepTime(sunday, KitStep{Day: 1}, true)
+	if mon.Weekday() != time.Monday || mon.Hour() != 10 || mon.Minute() != 30 {
+		t.Fatalf("day-1 step: %v", mon)
+	}
+	// day 6 from Sunday lands on a Saturday; day 7 would be a Sunday, so with
+	// business days it moves to Monday, and without them it stays on Sunday.
+	if got := stepTime(sunday, KitStep{Day: 6}, true); got.Weekday() != time.Saturday {
+		t.Fatalf("day-6 step: %v", got)
+	}
+	if got := stepTime(sunday, KitStep{Day: 7}, true); got.Weekday() != time.Monday {
+		t.Fatalf("day-7 step with business days: %v", got)
+	}
+	if got := stepTime(sunday, KitStep{Day: 7}, false); got.Weekday() != time.Sunday {
+		t.Fatalf("day-7 step without business days: %v", got)
+	}
+}

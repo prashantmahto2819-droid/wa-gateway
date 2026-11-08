@@ -65,12 +65,18 @@ func (m *Manager) sequence(ctx context.Context, owner, id int64) (*Sequence, err
 }
 
 // stepTime is when step i of a run that started at start comes up.
+//
+// A day-0 step answers the person who just wrote in, so it goes out straight
+// away — even on a Sunday. "Business days" is about not chasing someone on a
+// holiday days later; it must never hold back the first reply, which used to
+// leave a Sunday enquiry waiting until Monday morning.
 func stepTime(start time.Time, step KitStep, businessDays bool) time.Time {
-	t := start.AddDate(0, 0, max(step.Day, 0))
-	if step.Day > 0 {
-		// later steps go out at 10:30 local, not at the odd hour the run began
-		t = time.Date(t.Year(), t.Month(), t.Day(), 10, 30, 0, 0, t.Location())
+	if step.Day <= 0 {
+		return start
 	}
+	t := start.AddDate(0, 0, step.Day)
+	// later steps go out at 10:30 local, not at the odd hour the run began
+	t = time.Date(t.Year(), t.Month(), t.Day(), 10, 30, 0, 0, t.Location())
 	if businessDays {
 		for t.Weekday() == time.Sunday {
 			t = t.AddDate(0, 0, 1)
