@@ -54,19 +54,35 @@ if (sig !== req.headers['x-signature']) return res.status(401).end();`)}
     if (Array.isArray(j.events) && j.events.length) hookEvents = j.events.filter((e) => e !== 'test');
   }
 
+  const hdrRow = (k, v) => html`<div class="row"><input data-hk value="${k}" placeholder="X-Hook-Secret" style="max-width:220px"><input data-hv type="password" value="${v}" placeholder="${t('value')}" class="grow" autocomplete="off"><button type="button" class="btn-icon danger" data-rmhdr aria-label="${t('Remove')}">${ic('x', 14)}</button></div>`;
+
   function hookModal(w) {
     const isNew = !w; w = w || { url: '', events: ['message'] };
     const m = modal({ title: isNew ? t('Add webhook') : t('Edit webhook'), size: 'lg', body: html`<form class="stack">
       <label class="field"><span>${t('URL')}</span><input name="url" type="url" required value="${w.url}" placeholder="https://example.com/vivid-hook" autofocus></label>
       <fieldset><legend>${t('Events')}</legend><div class="events-grid">${hookEvents.map((e) => html`<label class="check"><input type="checkbox" name="events" data-multi value="${e}" ${(w.events || []).includes(e) ? 'checked' : ''}>${e === '*' ? t('All events') : e}</label>`)}</div></fieldset>
+      <fieldset><legend>${t('Headers')} <small class="muted">${t('optional')}</small></legend>
+        <div class="stack" data-hdrs style="gap:6px">${Object.entries(w.headers || {}).map(([k, v]) => hdrRow(k, v))}${Object.keys(w.headers || {}).length ? '' : hdrRow('', '')}</div>
+        <button type="button" class="btn sm mt-s" data-addhdr>${ic('plus', 14)}${t('Add header')}</button>
+        <p class="hint">${t('For a receiver that wants its own header instead of a secret in the address — for example X-Hook-Secret. Keeping the secret out of the URL keeps it out of every log line.')}</p></fieldset>
       <div data-secret></div></form>`,
     footer: html`<button class="btn ghost" data-close>${t('Close')}</button><button class="btn primary" data-ok>${t('Save webhook')}</button>` });
+    m.body.addEventListener('click', (e) => {
+      if (e.target.closest('[data-addhdr]')) m.body.querySelector('[data-hdrs]').insertAdjacentHTML('beforeend', hdrRow('', '').s);
+      const rm = e.target.closest('[data-rmhdr]'); if (rm) rm.closest('.row').remove();
+    });
     m.foot.querySelector('[data-ok]').addEventListener('click', async (ev) => {
       const okBtn = ev.currentTarget;
       const f = m.body.querySelector('form'); if (!f.reportValidity()) return;
       const events = $$('[name=events]:checked', f).map((x) => x.value);
       if (!events.length) return toast(t('Pick at least one event.'), 'warn');
-      const j = isNew ? await api('POST', '/api/webhooks', { url: f.url.value.trim(), events }) : await api('PATCH', `/api/webhooks/${w.id}`, { url: f.url.value.trim(), events });
+      const headers = {};
+      $$('[data-hdrs] .row', f).forEach((row) => {
+        const k = row.querySelector('[data-hk]').value.trim(), v = row.querySelector('[data-hv]').value.trim();
+        if (k && v) headers[k] = v;
+      });
+      const body = { url: f.url.value.trim(), events, headers };
+      const j = isNew ? await api('POST', '/api/webhooks', body) : await api('PATCH', `/api/webhooks/${w.id}`, body);
       if (!j.ok) return;
       loadHooks();
       const secret = j.webhook?.secret || j.secret;

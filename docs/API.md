@@ -338,5 +338,7 @@ Settings: `{site_name, tagline, company_name, support_email, support_phone, what
 
 Payload `{event, session, owner_id, timestamp, data}`; headers `X-Event`, `X-Timestamp`, `X-Signature: sha256=HMAC(secret, timestamp + "." + body)`.
 `message` data also carries `menu_choice:{id,text}` when the text answers a menu we sent. `poll.vote` data: `{poll_id, chat, voter, voter_phone, options:["A"]}`. `call` data: `{from, from_phone, video, rejected}`.
+**Headers.** A webhook can carry up to 10 headers of its own (`headers: {"X-Hook-Secret": "…"}` on create or update), for a receiver that wants a shared secret in a header rather than in the address — which keeps it out of every log line. Relay's own headers (`Content-Type`, `User-Agent`, `X-Event`, `X-Timestamp`, `X-Signature`) cannot be set or replaced this way.
+
 Events: `call`, `message`, `message.receipt`, `message.deleted`, `poll.vote`, `queue.status`, `campaign.status`, `session.status`, `session.paired`, `session.timelock`, `session.health`, `contact.optout`, `contact.optin`, `group.update`, `form.entry`, `flow.handover`, `post.pending`, `post.queued`, `test`.
 User webhooks get only events of their own sessions; the global `.env` WEBHOOK_URL gets everything.

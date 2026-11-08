@@ -25,6 +25,7 @@ import (
 type webhookJob struct {
 	url        string
 	secret     string
+	headers    map[string]string // headers the receiving system asks for, e.g. X-Hook-Secret
 	body       []byte
 	evt        string
 	endpointID int64 // user endpoint (0 = global / per-session URL)
@@ -141,6 +142,11 @@ func (w *Webhooks) post(ctx context.Context, job webhookJob) (int, error) {
 	ts := strconv.FormatInt(time.Now().Unix(), 10)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "vivid-relay/1.0")
+	// A receiver's own header (a shared secret, an API key): set first, so it can
+	// never replace the signature or event headers below.
+	for k, v := range job.headers {
+		req.Header.Set(k, v)
+	}
 	req.Header.Set("X-Event", job.evt)
 	req.Header.Set("X-Timestamp", ts)
 	if job.secret != "" {
@@ -176,21 +182,22 @@ func (m *Manager) dispatch(s *Session, event string, data any) {
 	if owner == 0 {
 		return
 	}
-	rows, err := m.db.Query(`SELECT id, url, secret, events FROM webhook_endpoints WHERE user_id=? AND active=1`, owner)
+	rows, err := m.db.Query(`SELECT id, url, secret, events, headers FROM webhook_endpoints WHERE user_id=? AND active=1`, owner)
 	if err != nil {
 		return
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var id int64
-		var url, secret, evts string
-		if rows.Scan(&id, &url, &secret, &evts) != nil {
+		var url, secret, evts, hdrs string
+		if rows.Scan(&id, &url, &secret, &evts, &hdrs) != nil {
 			continue
 		}
 		if !eventWanted(fromJSON[[]string](evts), event) {
 			continue
 		}
-		h.enqueue(webhookJob{url: url, secret: secret, body: body, evt: event, endpointID: id, guarded: !m.cfg.AllowPrivateURLs})
+		h.enqueue(webhookJob{url: url, secret: secret, headers: fromJSON[map[string]string](hdrs), body: body, evt: event,
+			endpointID: id, guarded: !m.cfg.AllowPrivateURLs})
 	}
 }
 

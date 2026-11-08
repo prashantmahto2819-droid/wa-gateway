@@ -2,7 +2,10 @@ package main
 
 import (
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 // Each account works only on its own numbers — the super admin included. A customer's
@@ -140,5 +143,56 @@ func TestAPIKeyStaysOnItsNumber(t *testing.T) {
 	biz.ok("POST", "/auth/signup", map[string]any{"name": "Biz", "email": "biz@example.com", "password": "secret123"})
 	if code, _ := biz.do("POST", "/api/keys", map[string]any{"name": "steal", "sessions": []string{shop}}, true); code != 400 {
 		t.Fatalf("key tied to someone else's number: %d", code)
+	}
+}
+
+// A webhook can carry the header its receiver asks for, so a shared secret need
+// not sit in the address where every log line repeats it.
+func TestWebhookCustomHeaders(t *testing.T) {
+	env := newTestEnv(t, func(c *Config) { c.AllowPrivateURLs = true })
+	owner := env.browser()
+	owner.ok("POST", "/auth/setup", map[string]any{"api_key": testKey, "name": "Owner", "email": "o@example.com", "password": "secret123"})
+
+	got := make(chan http.Header, 4)
+	recv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got <- r.Header.Clone()
+		w.WriteHeader(200)
+	}))
+	defer recv.Close()
+
+	hook := owner.ok("POST", "/api/webhooks", map[string]any{"url": recv.URL, "events": []string{"*"},
+		"headers": map[string]string{"X-Hook-Secret": "s3cr3t", "X-Tenant": "korba"}})["webhook"].(map[string]any)
+	if h := hook["headers"].(map[string]any); h["X-Hook-Secret"] != "s3cr3t" || len(h) != 2 {
+		t.Fatalf("headers not kept: %v", hook)
+	}
+	owner.ok("POST", fmt.Sprintf("/api/webhooks/%v/test", hook["id"]), nil)
+	select {
+	case h := <-got:
+		if h.Get("X-Hook-Secret") != "s3cr3t" || h.Get("X-Tenant") != "korba" {
+			t.Fatalf("custom headers not sent: %v", h)
+		}
+		if h.Get("X-Event") != "test" || h.Get("X-Signature") == "" {
+			t.Fatalf("Relay's own headers missing: %v", h)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("webhook never arrived")
+	}
+
+	// Relay's own headers cannot be taken over, and nothing may be smuggled in
+	for _, bad := range []map[string]string{
+		{"X-Signature": "sha256=forged"},
+		{"X-Event": "message"},
+		{"Content-Type": "text/plain"},
+		{"X-Bad\r\nInjected": "1"},
+		{"X Bad": "1"},
+	} {
+		if code, out := owner.do("PATCH", fmt.Sprintf("/api/webhooks/%v", hook["id"]), map[string]any{"headers": bad}, true); code != 400 {
+			t.Fatalf("header %v was accepted: %d %v", bad, code, out)
+		}
+	}
+	// and they can be cleared again
+	after := owner.ok("PATCH", fmt.Sprintf("/api/webhooks/%v", hook["id"]), map[string]any{"headers": map[string]string{}})
+	if h := after["webhooks"].([]any)[0].(map[string]any)["headers"].(map[string]any); len(h) != 0 {
+		t.Fatalf("headers not cleared: %v", h)
 	}
 }

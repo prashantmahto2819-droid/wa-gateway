@@ -219,7 +219,7 @@ func validWebhookURL(raw string) bool {
 
 func (a *API) listWebhooks(w http.ResponseWriter, r *http.Request) {
 	p := principalOf(r)
-	rows, err := a.m.db.QueryContext(r.Context(), `SELECT id, url, secret, events, active, last_status, last_at, created_at FROM webhook_endpoints WHERE user_id=? ORDER BY id`, p.UserID)
+	rows, err := a.m.db.QueryContext(r.Context(), `SELECT id, url, secret, events, headers, active, last_status, last_at, created_at FROM webhook_endpoints WHERE user_id=? ORDER BY id`, p.UserID)
 	if err != nil {
 		a.fail(w, err)
 		return
@@ -228,14 +228,57 @@ func (a *API) listWebhooks(w http.ResponseWriter, r *http.Request) {
 	out := []map[string]any{}
 	for rows.Next() {
 		var id, last, created int64
-		var u, secret, evts string
+		var u, secret, evts, hdrs string
 		var active, status int
-		if rows.Scan(&id, &u, &secret, &evts, &active, &status, &last, &created) == nil {
+		if rows.Scan(&id, &u, &secret, &evts, &hdrs, &active, &status, &last, &created) == nil {
+			h := fromJSON[map[string]string](hdrs)
+			if h == nil {
+				h = map[string]string{}
+			}
 			out = append(out, map[string]any{"id": id, "url": u, "secret": maskKey(secret), "events": fromJSON[[]string](evts),
-				"active": active == 1, "last_status": status, "last_at": last, "created_at": created})
+				"headers": h, "active": active == 1, "last_status": status, "last_at": last, "created_at": created})
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "webhooks": out, "events": webhookEvents})
+}
+
+// cleanHeaders vets the headers a receiver asks us to send. Its own headers only:
+// the ones Relay sets itself stay Relay's, so a header here can never forge an
+// event name or a signature.
+func cleanHeaders(in map[string]string) (map[string]string, error) {
+	out := map[string]string{}
+	if len(in) > 10 {
+		return nil, errors.New("at most 10 headers")
+	}
+	reserved := map[string]bool{"content-type": true, "user-agent": true, "x-event": true, "x-timestamp": true,
+		"x-signature": true, "host": true, "content-length": true, "connection": true, "transfer-encoding": true}
+	for k, v := range in {
+		k = strings.TrimSpace(k)
+		v = strings.TrimSpace(v)
+		if k == "" || v == "" {
+			continue
+		}
+		if len(k) > 64 || len(v) > 1024 {
+			return nil, errors.New("header " + k + ": name up to 64 and value up to 1024 characters")
+		}
+		if strings.ContainsAny(k+v, "\r\n") || !validHeaderName(k) {
+			return nil, errors.New("header " + k + ": letters, digits and - only")
+		}
+		if reserved[strings.ToLower(k)] {
+			return nil, errors.New("header " + k + " is set by Vivid Relay itself")
+		}
+		out[k] = v
+	}
+	return out, nil
+}
+
+func validHeaderName(k string) bool {
+	for _, c := range k {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 func cleanEvents(list []string) []string {
@@ -266,31 +309,38 @@ func (a *API) createWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var b struct {
-		URL    string   `json:"url"`
-		Events []string `json:"events"`
+		URL     string            `json:"url"`
+		Events  []string          `json:"events"`
+		Headers map[string]string `json:"headers"`
 	}
 	if err := decode(r, &b); err != nil || !validWebhookURL(b.URL) {
 		writeErr(w, http.StatusBadRequest, "bad_request", errors.New("a valid http(s) url is required"))
 		return
 	}
+	hdrs, err := cleanHeaders(b.Headers)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", err)
+		return
+	}
 	secret := "whsec_" + randToken(20)
-	res, err := a.m.db.ExecContext(r.Context(), `INSERT INTO webhook_endpoints(user_id, url, secret, events, created_at) VALUES(?,?,?,?,?)`,
-		p.UserID, strings.TrimSpace(b.URL), secret, jsonText(cleanEvents(b.Events)), time.Now().Unix())
+	res, err := a.m.db.ExecContext(r.Context(), `INSERT INTO webhook_endpoints(user_id, url, secret, events, headers, created_at) VALUES(?,?,?,?,?,?)`,
+		p.UserID, strings.TrimSpace(b.URL), secret, jsonText(cleanEvents(b.Events)), jsonText(hdrs), time.Now().Unix())
 	if err != nil {
 		a.fail(w, err)
 		return
 	}
 	id, _ := res.LastInsertId()
 	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "webhook": map[string]any{"id": id, "url": b.URL, "secret": secret,
-		"events": cleanEvents(b.Events), "active": true}})
+		"events": cleanEvents(b.Events), "headers": hdrs, "active": true}})
 }
 
 func (a *API) updateWebhook(w http.ResponseWriter, r *http.Request) {
 	p := principalOf(r)
 	var b struct {
-		URL    *string  `json:"url"`
-		Events []string `json:"events"`
-		Active *bool    `json:"active"`
+		URL     *string            `json:"url"`
+		Events  []string           `json:"events"`
+		Active  *bool              `json:"active"`
+		Headers *map[string]string `json:"headers"`
 	}
 	if err := decode(r, &b); err != nil {
 		writeErr(w, http.StatusBadRequest, "bad_request", err)
@@ -314,6 +364,14 @@ func (a *API) updateWebhook(w http.ResponseWriter, r *http.Request) {
 	if b.Active != nil {
 		_, _ = a.m.db.ExecContext(r.Context(), `UPDATE webhook_endpoints SET active=? WHERE id=?`, b2i(*b.Active), id)
 	}
+	if b.Headers != nil {
+		hdrs, err := cleanHeaders(*b.Headers)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "bad_request", err)
+			return
+		}
+		_, _ = a.m.db.ExecContext(r.Context(), `UPDATE webhook_endpoints SET headers=? WHERE id=?`, jsonText(hdrs), id)
+	}
 	a.listWebhooks(w, r)
 }
 
@@ -330,12 +388,12 @@ func (a *API) deleteWebhook(w http.ResponseWriter, r *http.Request) {
 func (a *API) testWebhook(w http.ResponseWriter, r *http.Request) {
 	p := principalOf(r)
 	var id int64
-	var u, secret string
-	if a.m.db.QueryRowContext(r.Context(), `SELECT id, url, secret FROM webhook_endpoints WHERE id=? AND user_id=?`, r.PathValue("id"), p.UserID).Scan(&id, &u, &secret) != nil {
+	var u, secret, hdrs string
+	if a.m.db.QueryRowContext(r.Context(), `SELECT id, url, secret, headers FROM webhook_endpoints WHERE id=? AND user_id=?`, r.PathValue("id"), p.UserID).Scan(&id, &u, &secret, &hdrs) != nil {
 		writeErr(w, http.StatusNotFound, "not_found", errors.New("webhook not found"))
 		return
 	}
-	job := webhookJob{url: u, secret: secret, body: payload("", p.UserID, "test", map[string]any{"hello": "from Vivid Relay"}), evt: "test",
+	job := webhookJob{url: u, secret: secret, headers: fromJSON[map[string]string](hdrs), body: payload("", p.UserID, "test", map[string]any{"hello": "from Vivid Relay"}), evt: "test",
 		endpointID: id, guarded: !a.cfg.AllowPrivateURLs}
 	status, err := a.m.hooks.post(r.Context(), job)
 	_, _ = a.m.db.ExecContext(r.Context(), `UPDATE webhook_endpoints SET last_status=?, last_at=? WHERE id=?`, status, time.Now().Unix(), id)
