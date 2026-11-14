@@ -1199,6 +1199,8 @@ const HI = {
   "{r} at {b}": "{b} में {r}",
   "Ravi Sharma": "रवि शर्मा",
   "Sales": "Sales",
+  "Your profile, password, appearance, AI assistant — and how fast your messages go out.": "आपकी जानकारी, password, रंग-रूप, AI सहायक — और आपके messages कितनी तेज़ी से जाते हैं।",
+  "Daily limits, the night pause and STOP opt-outs still apply. Follow progress, pause or cancel it in Campaigns.": "रोज़ की सीमा, रात का विराम और STOP वाली सूची तब भी लागू रहती है। प्रगति, रोकना या रद्द करना Campaigns में।",
   "Status visible": "Status दिखते हैं",
   "Headers": "Headers",
   "Add header": "Header जोड़ें",

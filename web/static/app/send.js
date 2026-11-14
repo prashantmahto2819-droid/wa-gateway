@@ -131,7 +131,7 @@ export async function render(ctx) {
       <div data-aud-body class="mt-s"></div>
       <div class="row mt-s" style="align-items:flex-end;gap:14px">
         <label class="field" style="max-width:200px"><span>${t('At most')}</span><input type="number" min="10" max="50000" step="10" data-aud-limit value="${a.limit}" placeholder="${t('everyone')}"></label>
-        <p class="hint grow">${t('Leave empty to reach everyone up to the server limit (default 30,000; Admin → Sending safety). People only see a Status if they also saved your number.')}</p></div>
+        <p class="hint grow">${t('Leave empty to reach everyone up to the server limit (default 30,000; Admin → Site settings). People only see a Status if they also saved your number.')}</p></div>
       <label class="switch mt-s"><input type="checkbox" data-aud-split ${a.split ? 'checked' : ''}><span class="track"></span><span class="switch-text"><span>${t('If WhatsApp refuses one big post, post it in parts')}</span><small>${t('Everyone still gets it; your own phone will show the status 2–3 times.')}</small></span></label>
       <div class="note info mt-s" data-prep>${t('Checking how ready your audience is…')}</div>`.s;
     drawPrep();
@@ -298,7 +298,7 @@ export async function render(ctx) {
         <label class="field"><span>${t('Repeat')}</span><select name="repeat">${['none', 'daily', 'weekly', 'monthly'].map((r) => html`<option value="${r}">${t({ none: 'Does not repeat', daily: 'Every day', weekly: 'Every week on…', monthly: 'Every month (same date)' }[r])}</option>`)}</select></label></div>
         <div data-days hidden><span class="field-label">${t('On these days')}</span><div class="days-pick mt-s">${DAYS.map((d, i) => html`<label><input type="checkbox" name="days" value="${i}" ${i >= 1 && i <= 5 ? 'checked' : ''}><span>${t(d)}</span></label>`)}</div></div>`}
       ${status || to.length < 2 ? '' : html`<fieldset><legend>${t('Gap between messages')}</legend><div class="choice-grid">${SPEEDS.map(([k, i, l, d]) => html`<label class="choice"><input type="radio" name="speed" value="${k}" ${k === 'safe' ? 'checked' : ''}><b>${ic(i, 16)}${t(l)}</b><small>${t(d)}</small></label>`)}</div></fieldset>`}
-      ${people ? html`<p class="hint">${t('Daily limits, quiet hours (SEND_HOUR_FROM–TO) and STOP opt-outs still apply. Follow progress, pause or cancel it in Campaigns.')}</p>` : ''}
+      ${people ? html`<p class="hint">${t('Daily limits, the night pause and STOP opt-outs still apply. Follow progress, pause or cancel it in Campaigns.')}</p>` : ''}
     </form>`, footer: html`<button class="btn ghost" data-close>${t('Cancel')}</button><button class="btn primary" data-ok>${now ? t('Start sending') : t('Schedule')}</button>` });
     const f = m.body.querySelector('form');
     f.addEventListener('change', (e) => { if (e.target.name === 'repeat') m.body.querySelector('[data-days]').hidden = e.target.value !== 'weekly'; });

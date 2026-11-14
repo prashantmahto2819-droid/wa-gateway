@@ -69,13 +69,13 @@ const ADMIN_NAV = { group: 'Admin', items: [
   ['admin-activations', '/app/admin/activations', 'server', 'Activations'],
   ['admin-inbox', '/app/admin/inbox', 'inbox', 'Inbox'],
   ['admin-audit', '/app/admin/audit', 'log', 'Audit log'],
-  ['admin-numbers', '/app/admin/numbers', 'phone', 'All numbers'],
+  ['admin-numbers', '/app/admin/numbers', 'phone', 'Numbers of every account'],
   ['admin-proxies', '/app/admin/proxies', 'globe', 'Proxy pool'],
   ['admin-settings', '/app/admin/settings', 'settings', 'Site settings'],
   ['admin-server', '/app/admin/server', 'globe', 'Licence server'],
 ] };
 const CLIENT_HIDDEN = ['admin-plans', 'admin-licences', 'admin-activations', 'admin-server'];
-const TABS = [['overview', '/app', 'home', 'Home'], ['numbers', '/app/numbers', 'phone', 'Numbers'], ['send', '/app/send', 'send', 'Send'], ['campaigns', '/app/campaigns', 'megaphone', 'Campaigns']];
+const TABS = [['overview', '/app', 'home', 'Overview'], ['numbers', '/app/numbers', 'phone', 'Numbers'], ['send', '/app/send', 'send', 'Send'], ['campaigns', '/app/campaigns', 'megaphone', 'Campaigns']];
 
 const state = { me: null, pub: null, cleanups: [], navKey: '', renderId: 0 };
 

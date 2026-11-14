@@ -15,7 +15,7 @@ export async function render(ctx) {
   const u = me.user;
   let theme = document.documentElement.getAttribute('data-theme') || 'system';
   root.innerHTML = html`<div class="page">
-    <div class="page-head"><div><h1>${t('Settings')}</h1><p>${t('Your profile, password, appearance and AI assistant.')}</p></div></div>
+    <div class="page-head"><div><h1>${t('Settings')}</h1><p>${t('Your profile, password, appearance, AI assistant — and how fast your messages go out.')}</p></div></div>
     <div class="grid g2" style="align-items:start">
       <div class="stack">
         <form class="panel" data-profile><div class="panel-head"><h2>${t('Profile')}</h2></div><div class="panel-body stack">
