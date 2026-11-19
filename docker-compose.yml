@@ -25,6 +25,7 @@ services:
     ports:
       - "80:80"
       - "443:443"
+      - "443:443/udp" # HTTP/3; Caddy advertises it, so the door must be open
     environment:
       DOMAIN: ${DOMAIN}
     volumes:

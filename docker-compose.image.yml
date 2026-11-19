@@ -21,7 +21,7 @@ services:
     image: caddy:2
     restart: unless-stopped
     depends_on: [gateway]
-    ports: ["80:80", "443:443"]
+    ports: ["80:80", "443:443", "443:443/udp"] # the udp one is HTTP/3
     environment:
       DOMAIN: ${DOMAIN}
     volumes:
