@@ -34,6 +34,12 @@ export async function pacingPanel(box, { admin = false } = {}) {
         ${num('floor_api_gap', p.floor_api_gap, 0, 'Smallest API / auto-reply gap anyone may use', 'seconds')}
         ${num('status_max', p.status_max || 30000, 10, 'Most people one Status goes to', 'people')}</div>
       ${toggle('users_can_change', !!p.users_can_change, t('Users may change their own pace'), t('They can only go slower than these limits, never faster.'))}</section>
+    <section><h3 class="mb">${ic('moon', 16)} ${t('Night pause')}</h3>
+      ${toggle('quiet_on', !!p.quiet_on, t('Hold campaigns back at night'), t('Off means campaigns run around the clock.'))}
+      <div class="form-grid" data-quiet>
+        ${num('quiet_from', p.quiet_from, 0, 'Campaigns run from', 'o’clock')}
+        ${num('quiet_to', p.quiet_to, 1, 'and stop at', 'o’clock')}</div>
+      <p class="hint">${t('India time. This holds back campaigns and bulk sends only — an OTP, any other API message and auto-replies go out at any hour, because somebody is waiting for them. Crossing midnight is fine: from 22 until 6.')}</p></section>
     <section><h3 class="mb">${ic('chart', 16)} ${t('Quota engine — how much a number may send')}</h3>
       <div class="form-grid">
         ${num('warmup_start', p.warmup_start, 0, 'Day 1 allowance for a newly linked number', 'messages')}
@@ -45,7 +51,7 @@ export async function pacingPanel(box, { admin = false } = {}) {
     ${locked ? '' : html`<div class="row" style="justify-content:flex-end;gap:8px">${admin ? '' : html`<button type="button" class="btn ghost" data-reset>${t('Use the defaults')}</button>`}<button class="btn primary">${t('Save sending settings')}</button></div>`}
   </form>`.s;
   const f = box.querySelector('[data-pace]');
-  const ints = ['gap_min', 'gap_max', 'batch_size', 'batch_pause_min', 'api_gap_min', 'api_gap_max', 'reply_delay_min', 'reply_delay_max', 'floor_gap', 'floor_api_gap', 'status_max', 'warmup_start', 'warmup_growth_pct', 'daily_limit', 'new_contact_limit'];
+  const ints = ['gap_min', 'gap_max', 'batch_size', 'batch_pause_min', 'api_gap_min', 'api_gap_max', 'reply_delay_min', 'reply_delay_max', 'floor_gap', 'floor_api_gap', 'status_max', 'warmup_start', 'warmup_growth_pct', 'daily_limit', 'new_contact_limit', 'quiet_from', 'quiet_to'];
   f.addEventListener('submit', async (e) => {
     e.preventDefault();
     const d = {};
@@ -54,7 +60,11 @@ export async function pacingPanel(box, { admin = false } = {}) {
     if (d.api_gap_max < d.api_gap_min) return toast(t('"to" must be at least "from".'), 'warn');
     if (d.batch_size === 0) d.batch_size = -1; // explicit "no breaks"
     d.typing = f.typing.checked; d.reply_typing = f.reply_typing.checked;
-    if (admin) d.users_can_change = f.users_can_change.checked;
+    if (admin) {
+      d.users_can_change = f.users_can_change.checked;
+      d.quiet_on = f.quiet_on.checked;
+      if (d.quiet_on && d.quiet_from === d.quiet_to) return toast(t('The night pause needs two different hours.'), 'warn');
+    }
     const r = await api('PUT', admin ? '/api/admin/pacing' : '/api/me/pacing', d);
     if (r.ok) toast(t('Sending settings saved'));
   });

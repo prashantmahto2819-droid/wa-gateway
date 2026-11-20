@@ -100,12 +100,15 @@ func TestErrorsAndLimits(t *testing.T) {
 		t.Fatalf("unknown link time %d", l)
 	}
 	at := func(h int) time.Time { return time.Date(2026, 1, 1, h, 30, 0, 0, time.Local) }
-	if !s.inSendingHours(at(9)) || !s.inSendingHours(at(20)) || s.inSendingHours(at(21)) || s.inSendingHours(at(3)) {
+	if !sendingNow(at(9), true, 9, 21) || !sendingNow(at(20), true, 9, 21) || sendingNow(at(21), true, 9, 21) || sendingNow(at(3), true, 9, 21) {
 		t.Fatal("sending hours wrong")
 	}
-	s.m.cfg.SendHourFrom, s.m.cfg.SendHourTo = 22, 6
-	if !s.inSendingHours(at(23)) || !s.inSendingHours(at(2)) || s.inSendingHours(at(12)) {
+	if !sendingNow(at(23), true, 22, 6) || !sendingNow(at(2), true, 22, 6) || sendingNow(at(12), true, 22, 6) {
 		t.Fatal("overnight hours wrong")
+	}
+	// Switched off, the queue runs at any hour — and 0..24 means the same thing.
+	if !sendingNow(at(3), false, 9, 21) || !sendingNow(at(3), true, 0, 24) {
+		t.Fatal("the night pause did not switch off")
 	}
 }
 

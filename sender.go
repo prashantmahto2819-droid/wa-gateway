@@ -727,9 +727,24 @@ func b2i(b bool) int {
 
 // ---------- the queue (campaigns / bulk) ----------
 
+// inSendingHours says whether the QUEUE may run right now. Only campaigns and
+// bulk sends pass through here. An OTP, any other API send, an auto-reply and
+// anything a person sets off take the direct path and never ask this question —
+// somebody is waiting at the other end of those, whatever the hour.
 func (s *Session) inSendingHours(now time.Time) bool {
-	from, to := s.m.cfg.SendHourFrom, s.m.cfg.SendHourTo
-	if from == 0 && to == 24 {
+	on, from, to := s.m.cfg.SendHourFrom != 0 || s.m.cfg.SendHourTo != 24, s.m.cfg.SendHourFrom, s.m.cfg.SendHourTo
+	if s.m.db != nil {
+		a := s.m.adminPacing(s.m.ctx)
+		if a.QuietOn != nil {
+			on, from, to = *a.QuietOn, a.QuietFrom, a.QuietTo
+		}
+	}
+	return sendingNow(now, on, from, to)
+}
+
+// sendingNow is the hour arithmetic on its own: from 22 to 6 wraps past midnight.
+func sendingNow(now time.Time, on bool, from, to int) bool {
+	if !on || (from == 0 && to == 24) {
 		return true
 	}
 	h := now.Hour()
