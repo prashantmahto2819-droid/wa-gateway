@@ -37,6 +37,9 @@ export async function pacingPanel(box, { admin = false } = {}) {
     <section><h3 class="mb">${ic('people', 16)} ${t('How often one person hears from you')}</h3>
       <div class="form-grid">${num('per_contact_weekly', p.per_contact_weekly, 0, 'Most campaign messages to one person in 7 days', 'messages')}</div>
       <p class="hint">${t('0 = no limit. Counts one person only — groups, channels, communities and Status are never counted. Link Publisher posts are left out of it altogether, even the rare one to a number. An OTP or a reply is never counted either. When it does hold something back, the waiting messages say “weekly_limit”.')}</p></section>
+    <section><h3 class="mb">${ic('link', 16)} ${t('Link Publisher speed')}</h3>
+      <div class="form-grid">${num('post_gap_min', p.post_gap_min, 0, 'Between a post’s messages, from', 'seconds')}${num('post_gap_max', p.post_gap_max, 0, 'to', 'seconds')}</div>
+      <p class="hint">${t('Posts go at this gap instead of the campaign one, and take no batch break, so an hour’s links reach a group together. 0 treats them like any other campaign. The daily limit and the night pause still apply.')}</p></section>
     <section><h3 class="mb">${ic('moon', 16)} ${t('Night pause')}</h3>
       ${toggle('quiet_on', !!p.quiet_on, t('Hold campaigns back at night'), t('Off means campaigns run around the clock.'))}
       <div class="form-grid" data-quiet>
@@ -54,7 +57,7 @@ export async function pacingPanel(box, { admin = false } = {}) {
     ${locked ? '' : html`<div class="row" style="justify-content:flex-end;gap:8px">${admin ? '' : html`<button type="button" class="btn ghost" data-reset>${t('Use the defaults')}</button>`}<button class="btn primary">${t('Save sending settings')}</button></div>`}
   </form>`.s;
   const f = box.querySelector('[data-pace]');
-  const ints = ['gap_min', 'gap_max', 'batch_size', 'batch_pause_min', 'api_gap_min', 'api_gap_max', 'reply_delay_min', 'reply_delay_max', 'floor_gap', 'floor_api_gap', 'status_max', 'warmup_start', 'warmup_growth_pct', 'daily_limit', 'new_contact_limit', 'quiet_from', 'quiet_to', 'per_contact_weekly'];
+  const ints = ['gap_min', 'gap_max', 'batch_size', 'batch_pause_min', 'api_gap_min', 'api_gap_max', 'reply_delay_min', 'reply_delay_max', 'floor_gap', 'floor_api_gap', 'status_max', 'warmup_start', 'warmup_growth_pct', 'daily_limit', 'new_contact_limit', 'quiet_from', 'quiet_to', 'per_contact_weekly', 'post_gap_min', 'post_gap_max'];
   f.addEventListener('submit', async (e) => {
     e.preventDefault();
     const d = {};

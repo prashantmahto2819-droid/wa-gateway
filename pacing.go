@@ -19,12 +19,17 @@ import (
 // A campaign may also set its own gap, and "take turns" across its numbers.
 
 type Pacing struct {
-	GapMin        int   `json:"gap_min"`                // seconds between queued (campaign/bulk) messages, per number
-	GapMax        int   `json:"gap_max"`                //
-	BatchSize     int   `json:"batch_size"`             // after this many queued messages take a break (0 = never)
-	BatchPauseMin int   `json:"batch_pause_min"`        // break length in minutes
-	APIGapMin     int   `json:"api_gap_min"`            // seconds between API / webhook / auto-reply messages, per number
-	APIGapMax     int   `json:"api_gap_max"`            //
+	GapMin        int `json:"gap_min"`         // seconds between queued (campaign/bulk) messages, per number
+	GapMax        int `json:"gap_max"`         //
+	BatchSize     int `json:"batch_size"`      // after this many queued messages take a break (0 = never)
+	BatchPauseMin int `json:"batch_pause_min"` // break length in minutes
+	APIGapMin     int `json:"api_gap_min"`     // seconds between API / webhook / auto-reply messages, per number
+	APIGapMax     int `json:"api_gap_max"`     //
+	// Link Publisher batches go at their own, much shorter gap: a group should
+	// get that hour's links together, not one every half hour. 0 = treat posts
+	// like any other campaign.
+	PostGapMin    int   `json:"post_gap_min"`
+	PostGapMax    int   `json:"post_gap_max"`
 	Typing        *bool `json:"typing,omitempty"`       // show "typing…" before API and campaign texts
 	ReplyTyping   *bool `json:"reply_typing,omitempty"` // show "typing…" before auto-replies
 	ReplyDelayMin int   `json:"reply_delay_min"`        // seconds an auto-reply waits ("reading") before typing
@@ -65,6 +70,7 @@ func envPacing(cfg *Config) AdminPacing {
 			GapMin: int(cfg.MinDelay / time.Second), GapMax: int(cfg.MaxDelay / time.Second),
 			BatchSize: cfg.BatchSize, BatchPauseMin: max(1, int(cfg.BatchPause/time.Minute)),
 			APIGapMin: max(1, int(cfg.DirectGap/time.Second)), APIGapMax: max(1, int(cfg.DirectGap/time.Second)) + 3,
+			PostGapMin: 8, PostGapMax: 15,
 			Typing: boolp(cfg.Typing), ReplyTyping: boolp(true), ReplyDelayMin: 2, ReplyDelayMax: 6,
 		},
 		FloorGap: 8, FloorAPIGap: 1, UsersCanChange: true,
@@ -127,6 +133,10 @@ func (p Pacing) clamp(a AdminPacing) Pacing {
 	p.APIGapMax = min(max(p.APIGapMax, p.APIGapMin), 600)
 	p.BatchSize = min(max(p.BatchSize, 0), 1000)
 	p.BatchPauseMin = min(max(p.BatchPauseMin, 1), 240)
+	if p.PostGapMin > 0 {
+		p.PostGapMin = max(p.PostGapMin, a.FloorGap, 1)
+		p.PostGapMax = min(max(p.PostGapMax, p.PostGapMin), 3600)
+	}
 	p.ReplyDelayMin = min(max(p.ReplyDelayMin, 0), 120)
 	p.ReplyDelayMax = min(max(p.ReplyDelayMax, p.ReplyDelayMin), 180)
 	if p.Typing == nil {

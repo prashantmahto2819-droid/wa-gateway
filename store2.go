@@ -508,6 +508,9 @@ func migrate2(db *sql.DB) error {
 		{"api_keys", "sessions", "TEXT NOT NULL DEFAULT '[]'"},
 		{"webhook_endpoints", "headers", "TEXT NOT NULL DEFAULT '{}'"},
 		{"contacts", "status_seen", "INTEGER NOT NULL DEFAULT 0"},
+		{"websites", "hold_minutes", "INTEGER NOT NULL DEFAULT 0"},
+		{"websites", "add_ref", "INTEGER NOT NULL DEFAULT 1"},
+		{"posts", "release_at", "INTEGER NOT NULL DEFAULT 0"},
 	}
 	for _, a := range adds {
 		if err := addColumn(db, a.table, a.col, a.def); err != nil {

@@ -219,6 +219,7 @@ func (m *Manager) watchdog() {
 			return
 		case <-t.C:
 		}
+		m.releaseHeld(m.ctx) // links that have waited out their website's window
 		if time.Since(lastClean) > 6*time.Hour {
 			cleanup(m.ctx, m.db, m.cfg.RetentionDays)
 			lastClean = time.Now()

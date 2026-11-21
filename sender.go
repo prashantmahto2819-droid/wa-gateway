@@ -921,6 +921,14 @@ func (s *Session) queueStep(ctx context.Context, batch *int) time.Duration {
 	if cp.gapMin > 0 {                         // the campaign's own gap replaces the speed setting
 		gmin, gmax, factor = secs(cp.gapMin), secs(max(cp.gapMax, cp.gapMin)), 1
 	}
+	// A Link Publisher batch should land as a batch. Spread over the campaign
+	// gap, an hour's links reach a group one every half hour all day; at the
+	// post gap they arrive together, the way a person posts a few things in one
+	// sitting. The daily limit and the night pause still hold.
+	post := strings.HasPrefix(campaign, "post")
+	if post && pace.PostGapMin > 0 {
+		gmin, gmax, factor = secs(pace.PostGapMin), secs(max(pace.PostGapMax, pace.PostGapMin)), 1
+	}
 	if slow {
 		factor *= 2
 	}
@@ -933,6 +941,9 @@ func (s *Session) queueStep(ctx context.Context, batch *int) time.Duration {
 		return gap
 	}
 	*batch++
+	if post && pace.PostGapMin > 0 {
+		return factor * s.randDur(gmin, gmax) // no ten-minute break in the middle of a batch
+	}
 	if pace.BatchSize > 0 && *batch >= pace.BatchSize {
 		*batch = 0
 		return factor * s.randDur(batchPause, batchPause+batchPause/2)

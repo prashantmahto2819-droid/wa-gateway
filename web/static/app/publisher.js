@@ -186,7 +186,7 @@ export async function render(ctx) {
   }
   function websiteModal(w) {
     const isNew = !w;
-    w = w || { name: '', url: '', text: '*{{title}}*\n\n{{summary}}\n\n{{url}}', routes: [{ category: '', session: '', targets: [], text: '', auto: false }], active: true };
+    w = w || { name: '', url: '', text: '*{{title}}*\n\n{{summary}}\n\n{{url}}', routes: [{ category: '', session: '', targets: [], text: '', auto: false }], active: true, hold_minutes: 0, add_ref: true };
     const routes = w.routes.map((r) => ({ ...r, targets: [...(r.targets || [])] }));
     const getters = [];
     const m = modal({ title: isNew ? t('Add website') : w.name, size: 'lg', body: '', footer: html`<button class="btn ghost" data-close>${t('Cancel')}</button>${isNew ? '' : html`<button class="btn" data-rotate>${t('New secret')}</button>`}<button class="btn primary" data-ok>${t('Save')}</button>` });
@@ -196,6 +196,10 @@ export async function render(ctx) {
         <div class="form-grid g2"><label class="field"><span>${t('Name')}</span><input name="name" value="${w.name}" required placeholder="Charameti"></label><label class="field"><span>${t('Site URL')}</span><input name="url" value="${w.url}" placeholder="https://charameti.com"></label></div>
         <label class="field"><span>${t('Default message')} <small>{{title}} {{summary}} {{url}} {{site}} {{category}}</small></span><textarea name="text" rows="3">${w.text}</textarea></label>
         ${raw(`<label class="switch"><input type="checkbox" name="active" ${w.active ? 'checked' : ''}><span class="track"></span><span class="switch-text"><span>${esc(t('Accept posts from this website'))}</span></span></label>`)}
+        <label class="field"><span>${t('Gather this site’s links before sending')}</span>
+          <select name="hold_minutes">${[[0, t('Send each one at once')], [15, t('Every 15 minutes')], [30, t('Every 30 minutes')], [60, t('Every hour')], [120, t('Every 2 hours')], [360, t('Every 6 hours')]].map(([v, lbl]) => html`<option value="${v}" ${+w.hold_minutes === v ? 'selected' : ''}>${lbl}</option>`)}</select>
+          <small class="muted">${t('Each link stays its own message — they just travel together, so a group gets the batch in one go instead of one every half hour.')}</small></label>
+        ${raw(`<label class="switch"><input type="checkbox" name="add_ref" ${w.add_ref ? 'checked' : ''}><span class="track"></span><span class="switch-text"><span>${esc(t('Put a short code under each message'))}</span><small>${esc(t('The same link going to ten groups becomes ten different texts, which is safer'))}</small></span></label>`)}
         <h3 class="mt">${t('Routes')} <small class="muted">${t('by category: which number sends, and to whom')}</small></h3>
         <div class="stack" data-routes>${routes.map((r, i) => html`<div class="panel panel-pad" data-route="${i}"><div class="form-grid g2">
             <label class="field"><span>${t('Category')} <small>(${t('blank = default for everything else')})</small></span><input data-k="category" value="${r.category}" placeholder="news, sports, jobs…"></label>
@@ -216,7 +220,8 @@ export async function render(ctx) {
         routes[i].auto = el.querySelector('[data-k="auto"]').checked;
         routes[i].targets = getters[i]();
       });
-      return { name: f.name.value.trim(), url: f.url.value.trim(), text: f.text.value, active: f.active.checked, routes };
+      return { name: f.name.value.trim(), url: f.url.value.trim(), text: f.text.value, active: f.active.checked,
+        hold_minutes: +f.hold_minutes.value || 0, add_ref: f.add_ref.checked, routes };
     }
     draw();
     m.body.addEventListener('click', (e) => {

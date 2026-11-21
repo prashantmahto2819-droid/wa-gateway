@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -42,17 +43,24 @@ type Route struct {
 }
 
 type Website struct {
-	ID        int64   `json:"id"`
-	Name      string  `json:"name"`
-	URL       string  `json:"url"`
-	Key       string  `json:"key"`
-	Secret    string  `json:"secret,omitempty"` // shown once at creation / rotation
-	Text      string  `json:"text"`             // default message template
-	Routes    []Route `json:"routes"`
-	Active    bool    `json:"active"`
-	Received  int     `json:"received"`
-	LastSeen  int64   `json:"last_seen"`
-	CreatedAt int64   `json:"created_at"`
+	ID     int64   `json:"id"`
+	Name   string  `json:"name"`
+	URL    string  `json:"url"`
+	Key    string  `json:"key"`
+	Secret string  `json:"secret,omitempty"` // shown once at creation / rotation
+	Text   string  `json:"text"`             // default message template
+	Routes []Route `json:"routes"`
+	Active bool    `json:"active"`
+	// HoldMinutes collects this site's links instead of sending each one the
+	// moment it arrives: 0 sends at once, 60 gathers an hour's worth and then
+	// lets them go together. Each link is still its own message.
+	HoldMinutes int `json:"hold_minutes"`
+	// AddRef puts a short code of its own under every message, so the same link
+	// going to ten groups is ten different texts rather than ten copies.
+	AddRef    bool  `json:"add_ref"`
+	Received  int   `json:"received"`
+	LastSeen  int64 `json:"last_seen"`
+	CreatedAt int64 `json:"created_at"`
 }
 
 const defaultPostText = "*{{title}}*\n\n{{summary}}\n\n{{url}}"
@@ -181,9 +189,20 @@ func (m *Manager) publish(ctx context.Context, p *Post, actor int64) error {
 		text = defaultPostText
 	}
 	vars := p.vars()
+	// The same link going to ten groups is ten identical texts, which is exactly
+	// what WhatsApp's duplicate-content checks look for. A short code of its own
+	// under each one makes them ten different messages.
+	code := ""
+	if p.WebsiteID != 0 {
+		var on int
+		_ = m.db.QueryRowContext(ctx, `SELECT add_ref FROM websites WHERE id=?`, p.WebsiteID).Scan(&on)
+		if on == 1 {
+			code = "ref"
+		}
+	}
 	msgs := make([]SendRequest, 0, len(tos))
 	for _, to := range tos {
-		msg := SendRequest{To: to, Text: text, Vars: vars}
+		msg := SendRequest{To: to, Text: text, Vars: vars, UniqueCode: code}
 		if p.Image != "" && to == "status" { // Status: picture with caption
 			msg.Media = &Media{Type: "image", URL: p.Image}
 		}
@@ -233,6 +252,61 @@ func (m *Manager) postStats(ctx context.Context, id int64) (map[string]int, stri
 
 func postLabel(id int64) string { return fmt.Sprintf("post%d", id) }
 
+// publishOrHold sends the post now, or parks it until its website's gathering
+// time is up so the whole hour's links reach each group together.
+func (m *Manager) publishOrHold(ctx context.Context, p *Post, actor int64) error {
+	mins := m.holdFor(ctx, p.WebsiteID)
+	if mins <= 0 {
+		return m.publish(ctx, p, actor)
+	}
+	now := time.Now()
+	rel := now.Add(time.Duration(mins) * time.Minute)
+	_, err := m.db.ExecContext(ctx, `UPDATE posts SET status='holding', release_at=?, decided_at=?, decided_by=?, note=? WHERE id=?`,
+		rel.Unix(), now.Unix(), actor, "waiting for the other links of this batch", p.ID)
+	return err
+}
+
+// holdFor is how long this post's website wants its links gathered before any
+// of them go out. A post pasted by hand belongs to no website and never waits.
+func (m *Manager) holdFor(ctx context.Context, siteID int64) int {
+	if siteID == 0 {
+		return 0
+	}
+	var mins int
+	_ = m.db.QueryRowContext(ctx, `SELECT hold_minutes FROM websites WHERE id=?`, siteID).Scan(&mins)
+	return mins
+}
+
+// releaseHeld publishes the posts whose waiting time is up. The whole batch
+// goes into the queue together, so each group gets that hour's links one after
+// another instead of one every half hour all day.
+func (m *Manager) releaseHeld(ctx context.Context) {
+	now := time.Now().Unix()
+	rows, err := m.db.QueryContext(ctx, `SELECT id FROM posts WHERE status='holding' AND release_at<=? ORDER BY id LIMIT 200`, now)
+	if err != nil {
+		return
+	}
+	ids := []int64{}
+	for rows.Next() {
+		var id int64
+		if rows.Scan(&id) == nil {
+			ids = append(ids, id)
+		}
+	}
+	rows.Close()
+	for _, id := range ids {
+		post, err := scanPost(m.db.QueryRowContext(ctx, `SELECT `+postCols+` FROM posts p LEFT JOIN websites w ON w.id=p.website_id WHERE p.id=?`, id))
+		if err != nil {
+			continue
+		}
+		if err := m.publish(ctx, post, post.DecidedBy); err != nil {
+			// Leave it holding and try again on the next round: a number that is
+			// offline right now is usually back within minutes.
+			slog.Warn("post could not be released", "post", id, "err", err)
+		}
+	}
+}
+
 // cancelPostQueue stops whatever of a post has not gone out yet. Sent messages
 // are left alone — they are already on somebody's phone.
 func (m *Manager) cancelPostQueue(ctx context.Context, id int64) int64 {
@@ -249,16 +323,17 @@ func randomToken(prefix string, n int) string {
 	return prefix + hex.EncodeToString(b)
 }
 
-const wsCols = `id, name, url, key, secret, text, routes, active, received, last_seen, created_at`
+const wsCols = `id, name, url, key, secret, text, routes, active, hold_minutes, add_ref, received, last_seen, created_at`
 
 func scanWebsite(row interface{ Scan(...any) error }) (*Website, error) {
 	var w Website
 	var routes string
-	var active int
-	if err := row.Scan(&w.ID, &w.Name, &w.URL, &w.Key, &w.Secret, &w.Text, &routes, &active, &w.Received, &w.LastSeen, &w.CreatedAt); err != nil {
+	var active, addRef int
+	if err := row.Scan(&w.ID, &w.Name, &w.URL, &w.Key, &w.Secret, &w.Text, &routes, &active, &w.HoldMinutes, &addRef, &w.Received, &w.LastSeen, &w.CreatedAt); err != nil {
 		return nil, err
 	}
 	w.Active = active == 1
+	w.AddRef = addRef == 1
 	w.Routes = fromJSON[[]Route](routes)
 	if w.Routes == nil {
 		w.Routes = []Route{}
@@ -287,7 +362,7 @@ func (a *API) listWebsites(w http.ResponseWriter, r *http.Request) {
 func (a *API) saveWebsite(w http.ResponseWriter, r *http.Request) {
 	p := principalOf(r)
 	ctx := r.Context()
-	site := &Website{Active: true, Text: defaultPostText, Routes: []Route{}}
+	site := &Website{Active: true, AddRef: true, Text: defaultPostText, Routes: []Route{}}
 	isNew := true
 	if id := r.PathValue("id"); id != "" {
 		old, err := scanWebsite(a.m.db.QueryRowContext(ctx, `SELECT `+wsCols+` FROM websites WHERE id=? AND owner_id=?`, id, p.UserID))
@@ -303,6 +378,8 @@ func (a *API) saveWebsite(w http.ResponseWriter, r *http.Request) {
 		Text   *string `json:"text"`
 		Routes []Route `json:"routes"`
 		Active *bool   `json:"active"`
+		Hold   *int    `json:"hold_minutes"`
+		AddRef *bool   `json:"add_ref"`
 		Rotate bool    `json:"rotate_secret"`
 	}
 	if err := decode(r, &in); err != nil {
@@ -320,6 +397,16 @@ func (a *API) saveWebsite(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.Active != nil {
 		site.Active = *in.Active
+	}
+	if in.Hold != nil {
+		if *in.Hold < 0 || *in.Hold > 24*60 {
+			writeErr(w, http.StatusBadRequest, "bad_request", errors.New("collect for 0 to 1440 minutes"))
+			return
+		}
+		site.HoldMinutes = *in.Hold
+	}
+	if in.AddRef != nil {
+		site.AddRef = *in.AddRef
 	}
 	if in.Routes != nil {
 		for i := range in.Routes {
@@ -356,16 +443,16 @@ func (a *API) saveWebsite(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().Unix()
 	if isNew {
-		res, err := a.m.db.ExecContext(ctx, `INSERT INTO websites(owner_id, name, url, key, secret, text, routes, active, received, last_seen, created_at) VALUES(?,?,?,?,?,?,?,?,0,0,?)`,
-			p.UserID, site.Name, site.URL, site.Key, site.Secret, site.Text, jsonText(site.Routes), b2i(site.Active), now)
+		res, err := a.m.db.ExecContext(ctx, `INSERT INTO websites(owner_id, name, url, key, secret, text, routes, active, hold_minutes, add_ref, received, last_seen, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,0,0,?)`,
+			p.UserID, site.Name, site.URL, site.Key, site.Secret, site.Text, jsonText(site.Routes), b2i(site.Active), site.HoldMinutes, b2i(site.AddRef), now)
 		if err != nil {
 			a.fail(w, err)
 			return
 		}
 		site.ID, _ = res.LastInsertId()
 		site.CreatedAt = now
-	} else if _, err := a.m.db.ExecContext(ctx, `UPDATE websites SET name=?, url=?, key=?, secret=?, text=?, routes=?, active=? WHERE id=? AND owner_id=?`,
-		site.Name, site.URL, site.Key, site.Secret, site.Text, jsonText(site.Routes), b2i(site.Active), site.ID, p.UserID); err != nil {
+	} else if _, err := a.m.db.ExecContext(ctx, `UPDATE websites SET name=?, url=?, key=?, secret=?, text=?, routes=?, active=?, hold_minutes=?, add_ref=? WHERE id=? AND owner_id=?`,
+		site.Name, site.URL, site.Key, site.Secret, site.Text, jsonText(site.Routes), b2i(site.Active), site.HoldMinutes, b2i(site.AddRef), site.ID, p.UserID); err != nil {
 		a.fail(w, err)
 		return
 	}
@@ -408,7 +495,7 @@ func (a *API) verifyInbound(w http.ResponseWriter, r *http.Request, body []byte)
 	row := a.m.db.QueryRowContext(r.Context(), `SELECT owner_id, `+wsCols+` FROM websites WHERE key=?`, key)
 	var site Website
 	var routes string
-	var active int
+	var active, addRef int
 	if err := row.Scan(&owner, &site.ID, &site.Name, &site.URL, &site.Key, &site.Secret, &site.Text, &routes, &active, &site.Received, &site.LastSeen, &site.CreatedAt); err != nil {
 		writeErr(w, http.StatusUnauthorized, "unauthorized", errors.New("unknown website key"))
 		return nil, 0, false
@@ -546,7 +633,7 @@ func (a *API) inbound(w http.ResponseWriter, r *http.Request) {
 	if auto && in.Auto && len(targets) > 0 {
 		p, _ := scanPost(a.m.db.QueryRowContext(ctx, `SELECT `+postCols+` FROM posts p LEFT JOIN websites w ON w.id=p.website_id WHERE p.id=?`, id))
 		if p != nil {
-			if err := a.m.publish(ctx, p, 0); err != nil {
+			if err := a.m.publishOrHold(ctx, p, 0); err != nil {
 				_, _ = a.m.db.ExecContext(ctx, `UPDATE posts SET note=? WHERE id=?`, "auto-send failed: "+err.Error(), id)
 			} else {
 				out["status"] = "queued"
@@ -682,7 +769,7 @@ func (a *API) createPosts(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if in.Approve {
-			if err := a.m.publish(ctx, post, p.ActorID); err != nil {
+			if err := a.m.publishOrHold(ctx, post, p.ActorID); err != nil {
 				_, _ = a.m.db.ExecContext(ctx, `UPDATE posts SET note=? WHERE id=?`, err.Error(), id)
 				post.Note = err.Error()
 			} else {
@@ -791,7 +878,7 @@ func (a *API) approvePost(w http.ResponseWriter, r *http.Request) {
 		post.Text = truncate(*in.Text, 4000)
 	}
 	_, _ = a.m.db.ExecContext(r.Context(), `UPDATE posts SET targets=?, session=?, text=? WHERE id=?`, jsonText(post.Targets), post.Session, post.Text, post.ID)
-	if err := a.m.publish(r.Context(), post, p.ActorID); err != nil {
+	if err := a.m.publishOrHold(r.Context(), post, p.ActorID); err != nil {
 		writeErr(w, http.StatusBadRequest, "bad_request", err)
 		return
 	}
