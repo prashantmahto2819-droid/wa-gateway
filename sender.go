@@ -871,7 +871,7 @@ func (s *Session) queueStep(ctx context.Context, batch *int) time.Duration {
 		s.finish(context.WithoutCancel(ctx), id, campaign, "skipped", "opted_out", nil)
 		return 0
 	}
-	if weekly := s.weeklyPerContact(ctx); weekly > 0 && weeklyCount(ctx, s.m.db, toAddr) >= weekly {
+	if weekly := s.weeklyPerContact(ctx); weekly > 0 && isOnePerson(toAddr) && weeklyCount(ctx, s.m.db, toAddr) >= weekly {
 		_, _ = s.m.db.ExecContext(context.WithoutCancel(ctx), `UPDATE gw_outbox SET status='queued', attempts=attempts-1, error='weekly_limit', not_before=? WHERE id=?`,
 			now.Add(24*time.Hour).Unix(), id)
 		return 0

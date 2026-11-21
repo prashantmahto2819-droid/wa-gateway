@@ -36,7 +36,7 @@ export async function pacingPanel(box, { admin = false } = {}) {
       ${toggle('users_can_change', !!p.users_can_change, t('Users may change their own pace'), t('They can only go slower than these limits, never faster.'))}</section>
     <section><h3 class="mb">${ic('people', 16)} ${t('How often one person hears from you')}</h3>
       <div class="form-grid">${num('per_contact_weekly', p.per_contact_weekly, 0, 'Most campaign messages to one person in 7 days', 'messages')}</div>
-      <p class="hint">${t('0 = no limit. This is what holds a second or third post back when the same list is used again and again — the waiting messages then say “weekly_limit”. It counts campaigns only; an OTP or a reply is never counted.')}</p></section>
+      <p class="hint">${t('0 = no limit. Counts one person only — groups, channels, communities and Status are never counted, so Link Publisher posts are not held by this. It counts campaigns only; an OTP or a reply is never counted. When it does hold something back, the waiting messages say “weekly_limit”.')}</p></section>
     <section><h3 class="mb">${ic('moon', 16)} ${t('Night pause')}</h3>
       ${toggle('quiet_on', !!p.quiet_on, t('Hold campaigns back at night'), t('Off means campaigns run around the clock.'))}
       <div class="form-grid" data-quiet>

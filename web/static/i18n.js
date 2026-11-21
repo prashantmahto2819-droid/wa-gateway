@@ -1115,7 +1115,7 @@ const HI = {
   "Today’s limit for this number is used up": "इस नंबर की आज की सीमा पूरी हो गई",
   "How often one person hears from you": "एक व्यक्ति को कितनी बार",
   "Most campaign messages to one person in 7 days": "7 दिन में एक व्यक्ति को ज़्यादा से ज़्यादा",
-  "0 = no limit. This is what holds a second or third post back when the same list is used again and again — the waiting messages then say “weekly_limit”. It counts campaigns only; an OTP or a reply is never counted.": "0 = कोई सीमा नहीं। एक ही list को बार-बार भेजने पर दूसरा-तीसरा post यही रोकता है — तब रुके messages पर “weekly_limit” लिखा आता है। सिर्फ़ campaigns गिने जाते हैं; OTP या जवाब कभी नहीं।",
+  "0 = no limit. Counts one person only — groups, channels, communities and Status are never counted, so Link Publisher posts are not held by this. It counts campaigns only; an OTP or a reply is never counted. When it does hold something back, the waiting messages say “weekly_limit”.": "0 = कोई सीमा नहीं। सिर्फ़ एक व्यक्ति के लिए गिना जाता है — group, channel, community और Status कभी नहीं गिने जाते, इसलिए Link Publisher के post इससे नहीं रुकते। सिर्फ़ campaigns गिने जाते हैं; OTP या जवाब कभी नहीं। जब यह किसी को रोकता है तो रुके messages पर “weekly_limit” लिखा आता है।",
   "Night pause": "रात का विराम",
   "Hold campaigns back at night": "रात में campaigns रोक दें",
   "Off means campaigns run around the clock.": "बंद रखेंगे तो campaigns चौबीसों घंटे चलेंगे।",

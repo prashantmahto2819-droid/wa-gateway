@@ -264,6 +264,14 @@ func (s *Session) handleKeyword(ctx context.Context, chat types.JID, text string
 // ======================= 4 & 5. Per-person cap and priority =======================
 
 // weeklyCount counts campaign messages this person got in the last 7 days (all numbers).
+// isOnePerson says whether an address belongs to a single human. A group, a
+// channel, a community and Status are places people chose to be in, and posting
+// to your own group twice in a week is not pestering anybody — so the
+// per-person weekly rail must not count them.
+func isOnePerson(jid string) bool {
+	return strings.HasSuffix(jid, "@s.whatsapp.net") || strings.HasSuffix(jid, "@lid")
+}
+
 func weeklyCount(ctx context.Context, db *sql.DB, to string) int {
 	var n int
 	_ = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM gw_outbox WHERE to_addr=? AND direct=0 AND status='sent' AND sent_at>?`,
