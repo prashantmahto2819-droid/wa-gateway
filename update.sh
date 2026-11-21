@@ -27,4 +27,7 @@ fi
 
 VERSION="$(git rev-parse --short HEAD 2>/dev/null || echo local)" docker compose up -d --build
 docker image prune -f >/dev/null 2>&1 || true
+# Every build leaves Go's compile cache behind. A week's worth keeps the next
+# build fast; older than that is just disk (it reached 18 GB once).
+docker builder prune -f --filter until=168h >/dev/null 2>&1 || true
 echo "✅ Updated. Logs: docker compose logs -f gateway"
