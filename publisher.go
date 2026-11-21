@@ -76,6 +76,7 @@ type Post struct {
 	Label     string            `json:"label"`
 	Note      string            `json:"note"`
 	Stats     map[string]int    `json:"stats,omitempty"`
+	Holdup    string            `json:"holdup,omitempty"` // why the waiting ones wait
 	CreatedAt int64             `json:"created_at"`
 	DecidedAt int64             `json:"decided_at"`
 	DecidedBy int64             `json:"decided_by"`
@@ -205,11 +206,15 @@ func (m *Manager) postOwner(ctx context.Context, id int64) int64 {
 	return o
 }
 
-func (m *Manager) postStats(ctx context.Context, id int64) map[string]int {
+// postStats counts a post's messages by status, and names the reason the
+// waiting ones are waiting — a queue that never moves looks the same as a slow
+// one until you can see that every row says weekly_limit.
+func (m *Manager) postStats(ctx context.Context, id int64) (map[string]int, string) {
 	st := map[string]int{}
-	rows, err := m.db.QueryContext(ctx, `SELECT status, COUNT(*) FROM gw_outbox WHERE campaign=? GROUP BY status`, fmt.Sprintf("post%d", id))
+	label := postLabel(id)
+	rows, err := m.db.QueryContext(ctx, `SELECT status, COUNT(*) FROM gw_outbox WHERE campaign=? GROUP BY status`, label)
 	if err != nil {
-		return st
+		return st, ""
 	}
 	defer rows.Close()
 	for rows.Next() {
@@ -219,7 +224,21 @@ func (m *Manager) postStats(ctx context.Context, id int64) map[string]int {
 			st[s] = n
 		}
 	}
-	return st
+	rows.Close()
+	var holdup string
+	_ = m.db.QueryRowContext(ctx, `SELECT error FROM gw_outbox WHERE campaign=? AND status='queued' AND COALESCE(error,'')<>''
+		GROUP BY error ORDER BY COUNT(*) DESC LIMIT 1`, label).Scan(&holdup)
+	return st, holdup
+}
+
+func postLabel(id int64) string { return fmt.Sprintf("post%d", id) }
+
+// cancelPostQueue stops whatever of a post has not gone out yet. Sent messages
+// are left alone — they are already on somebody's phone.
+func (m *Manager) cancelPostQueue(ctx context.Context, id int64) int64 {
+	res, err := m.db.ExecContext(ctx, `UPDATE gw_outbox SET status='cancelled' WHERE campaign=? AND status IN ('queued','paused')`, postLabel(id))
+	n, _ := rowsAffected(res, err)
+	return n
 }
 
 // ---------- websites ----------
@@ -570,7 +589,7 @@ func (a *API) listPosts(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		if x, err := scanPost(rows); err == nil {
 			if x.Status == "queued" {
-				x.Stats = a.m.postStats(r.Context(), x.ID)
+				x.Stats, x.Holdup = a.m.postStats(r.Context(), x.ID)
 			}
 			out = append(out, x)
 		}
@@ -801,10 +820,35 @@ func (a *API) rejectPost(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) deletePost(w http.ResponseWriter, r *http.Request) {
 	p := principalOf(r)
-	res, err := a.m.db.ExecContext(r.Context(), `DELETE FROM posts WHERE id=? AND owner_id=?`, r.PathValue("id"), p.UserID)
-	if n, _ := rowsAffected(res, err); n == 0 {
+	post, err := a.m.postOf(r.Context(), r.PathValue("id"), p.UserID)
+	if err != nil {
 		writeErr(w, http.StatusNotFound, "not_found", errors.New("post not found"))
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	// Whatever of it has not gone out must stop too, or deleting the post just
+	// hides a queue that keeps sending.
+	left := a.m.cancelPostQueue(r.Context(), post)
+	if _, err := a.m.db.ExecContext(r.Context(), `DELETE FROM posts WHERE id=? AND owner_id=?`, post, p.UserID); err != nil {
+		a.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "cancelled": left})
+}
+
+// POST /api/posts/{id}/cancel — stop what is still waiting, keep the post.
+func (a *API) cancelPost(w http.ResponseWriter, r *http.Request) {
+	p := principalOf(r)
+	post, err := a.m.postOf(r.Context(), r.PathValue("id"), p.UserID)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "not_found", errors.New("post not found"))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "cancelled": a.m.cancelPostQueue(r.Context(), post)})
+}
+
+// postOf turns the id in the path into one this account actually owns.
+func (m *Manager) postOf(ctx context.Context, raw string, owner int64) (int64, error) {
+	var id int64
+	err := m.db.QueryRowContext(ctx, `SELECT id FROM posts WHERE id=? AND owner_id=?`, raw, owner).Scan(&id)
+	return id, err
 }

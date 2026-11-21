@@ -181,6 +181,7 @@ func (a *API) routes() http.Handler {
 	mux.HandleFunc("PATCH /api/posts/{id}", auth(a.requirePerm("bulk", a.savePost)))
 	mux.HandleFunc("POST /api/posts/{id}/approve", auth(a.requirePerm("bulk", a.approvePost)))
 	mux.HandleFunc("POST /api/posts/{id}/reject", auth(a.requirePerm("bulk", a.rejectPost)))
+	mux.HandleFunc("POST /api/posts/{id}/cancel", auth(a.requirePerm("bulk", a.cancelPost)))
 	mux.HandleFunc("DELETE /api/posts/{id}", auth(a.requirePerm("bulk", a.deletePost)))
 	mux.HandleFunc("GET /f/{code}/{key}", a.publicForm)
 	mux.HandleFunc("POST /f/{code}/{key}", a.publicFormSubmit)

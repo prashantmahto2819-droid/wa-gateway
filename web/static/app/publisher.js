@@ -31,15 +31,22 @@ export async function render(ctx) {
 
   const targetText = (tg) => (tg || []).map((x) => x.to === 'status' ? t('Status') : x.name || x.to).join(', ') || t('nowhere yet');
   function postCard(p) {
-    const stats = p.stats ? Object.entries(p.stats).map(([k, v]) => `${v} ${t(k)}`).join(' · ') : '';
+    const st = p.stats || {};
+    const waiting = (st.queued || 0) + (st.paused || 0);
+    const stats = Object.entries(st).map(([k, v]) => `${v} ${t(k)}`).join(' · ');
+    // A post keeps saying "queued" for ever, so the real state is the counts —
+    // and when every waiting message carries the same reason, say it plainly.
+    const why = { weekly_limit: 'Those people have had their messages for this week — raise the limit in Admin → Site settings, or let them wait', opted_out: 'They asked to stop', daily_limit: 'Today’s limit for this number is used up' }[p.holdup];
+    const hold = waiting && p.holdup ? html`<div class="mt-s"><small class="warn">${ic('clock', 13)} ${t(why || p.holdup)}</small></div>` : '';
     return html`<article class="panel" data-post="${p.id}"><div class="panel-body" style="display:flex;gap:14px;align-items:flex-start">
       ${p.image ? html`<img src="${p.image}" alt="" style="width:88px;height:88px;object-fit:cover;border-radius:10px;flex:none" loading="lazy">` : html`<span class="list-ico" style="flex:none">${ic('link')}</span>`}
       <div style="flex:1;min-width:0"><b class="ellipsis" style="display:block">${p.title || p.url}</b>
         ${p.summary ? html`<p class="muted" style="margin:4px 0">${p.summary.slice(0, 220)}</p>` : ''}
         <small class="muted"><a href="${p.url}" target="_blank" rel="noopener">${p.url.slice(0, 80)}</a> · ${p.website || t('pasted')}${p.category ? ' · ' + p.category : ''} · ${relTime(p.created_at)}</small>
         <div class="mt-s"><small>${ic('send', 13)} ${t('To')}: ${targetText(p.targets)}${p.session ? ' · ' + t('from') + ' ' + p.session : ''}</small></div>
-        ${p.note ? html`<div class="mt-s"><small class="muted">${p.note}</small></div>` : ''}${stats ? html`<div class="mt-s"><small>${stats}</small></div>` : ''}</div>
-      <div class="stack" style="flex:none;gap:6px">${pill(t(p.status), p.status === 'pending' ? 'warn' : p.status === 'queued' ? 'ok' : 'muted')}
+        ${p.note ? html`<div class="mt-s"><small class="muted">${p.note}</small></div>` : ''}${stats ? html`<div class="mt-s"><small>${stats}</small></div>` : ''}${hold}</div>
+      <div class="stack" style="flex:none;gap:6px">${pill(waiting ? t('{n} waiting', { n: waiting }) : t(p.status), p.status === 'pending' ? 'warn' : waiting ? 'ok' : 'muted')}
+        ${waiting && canBulk ? html`<button class="btn sm ghost danger" data-cancel="${p.id}">${t('Stop the rest')}</button>` : ''}
         ${p.status === 'pending' && canBulk ? html`<button class="btn sm primary" data-approve="${p.id}">${ic('check', 14)}${t('Approve')}</button><button class="btn sm" data-edit="${p.id}">${ic('edit', 14)}${t('Edit')}</button><button class="btn sm ghost danger" data-reject="${p.id}">${t('Reject')}</button>` : ''}
         ${p.status !== 'pending' && canBulk ? html`<button class="btn-icon danger" data-del="${p.id}" aria-label="${t('Delete')}">${ic('trash', 16)}</button>` : ''}</div></div></article>`;
   }
@@ -143,6 +150,12 @@ export async function render(ctx) {
     const ed = e.target.closest('[data-edit]'); if (ed) return editModal(find(ed.dataset.edit), false);
     const rj = e.target.closest('[data-reject]'); if (rj && (await api('POST', `/api/posts/${rj.dataset.reject}/reject`, {})).ok) { toast(t('Rejected')); return show(); }
     const del = e.target.closest('[data-del]'); if (del && (await api('DELETE', '/api/posts/' + del.dataset.del)).ok) return show();
+    const cx = e.target.closest('[data-cancel]');
+    if (cx) {
+      if (!await confirmBox(t('Stop the messages of this post that have not gone out yet? The ones already sent stay sent.'))) return;
+      const j = await api('POST', `/api/posts/${cx.dataset.cancel}/cancel`, {});
+      if (j.ok) { toast(t('{n} stopped', { n: j.cancelled })); return show(); }
+    }
     if (e.target.closest('[data-a="approve-all"]')) {
       const ready = (box._posts || []).filter((p) => p.targets?.length);
       if (!ready.length) return toast(t('None of them has recipients yet — open each and choose where to send.'), 'warn');
