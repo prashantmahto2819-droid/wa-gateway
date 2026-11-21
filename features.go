@@ -272,6 +272,16 @@ func isOnePerson(jid string) bool {
 	return strings.HasSuffix(jid, "@s.whatsapp.net") || strings.HasSuffix(jid, "@lid")
 }
 
+// weeklyRailApplies decides whether the per-person weekly limit is this
+// message's business at all. It is a rail for campaigns aimed at individuals,
+// so it skips anything that is not one person, and it skips Link Publisher
+// posts even when one of those does go to a number — the owner publishes to
+// his own groups and channels and asked for the rail off there. The daily
+// limit, the pacing and STOP still hold for every one of them.
+func weeklyRailApplies(campaign, to string) bool {
+	return isOnePerson(to) && !strings.HasPrefix(campaign, "post")
+}
+
 func weeklyCount(ctx context.Context, db *sql.DB, to string) int {
 	var n int
 	_ = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM gw_outbox WHERE to_addr=? AND direct=0 AND status='sent' AND sent_at>?`,
