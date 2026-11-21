@@ -41,9 +41,13 @@ type AdminPacing struct {
 	// nothing else: an OTP, any other API send, an auto-reply and anything a
 	// person sets off go out at whatever hour they are asked for, because
 	// somebody is waiting at the other end.
-	QuietOn   *bool `json:"quiet_on,omitempty"` // nil = .env hours decide
-	QuietFrom int   `json:"quiet_from"`         // campaigns run from this hour (India time)
-	QuietTo   int   `json:"quiet_to"`           // …until this one; 0 and 24 = all day
+	// How many campaign messages one person may get in 7 days. It is what holds
+	// a second and third post back when the same list is used again and again.
+	// 0 = no limit; nil = .env decides.
+	PerContactWeekly *int  `json:"per_contact_weekly,omitempty"`
+	QuietOn          *bool `json:"quiet_on,omitempty"` // nil = .env hours decide
+	QuietFrom        int   `json:"quiet_from"`         // campaigns run from this hour (India time)
+	QuietTo          int   `json:"quiet_to"`           // …until this one; 0 and 24 = all day
 	// Quota engine: how a number's daily allowance grows after linking.
 	WarmupStart     int `json:"warmup_start"`      // day-1 allowance (0 = .env WARMUP_START)
 	WarmupGrowthPct int `json:"warmup_growth_pct"` // growth per day in percent (0 = 60)
@@ -52,6 +56,7 @@ type AdminPacing struct {
 }
 
 func boolp(b bool) *bool { return &b }
+func intp(i int) *int    { return &i }
 
 // envPacing is layer 1.
 func envPacing(cfg *Config) AdminPacing {
@@ -63,8 +68,9 @@ func envPacing(cfg *Config) AdminPacing {
 			Typing: boolp(cfg.Typing), ReplyTyping: boolp(true), ReplyDelayMin: 2, ReplyDelayMax: 6,
 		},
 		FloorGap: 8, FloorAPIGap: 1, UsersCanChange: true,
-		QuietOn:   boolp(cfg.SendHourFrom != 0 || cfg.SendHourTo != 24),
-		QuietFrom: cfg.SendHourFrom, QuietTo: cfg.SendHourTo,
+		PerContactWeekly: intp(cfg.PerContactWeekly),
+		QuietOn:          boolp(cfg.SendHourFrom != 0 || cfg.SendHourTo != 24),
+		QuietFrom:        cfg.SendHourFrom, QuietTo: cfg.SendHourTo,
 		WarmupStart: cfg.WarmupStart, WarmupGrowthPct: 60, DailyLimit: cfg.DailyLimit, NewContactLimit: cfg.NewContactLimit,
 	}
 }
@@ -157,6 +163,9 @@ func (m *Manager) adminPacing(ctx context.Context) AdminPacing {
 			a.Pacing = a.Pacing.overlay(saved.Pacing)
 			a.FloorGap, a.FloorAPIGap, a.UsersCanChange, a.StatusMax = saved.FloorGap, saved.FloorAPIGap, saved.UsersCanChange, saved.StatusMax
 			a.WarmupStart, a.WarmupGrowthPct, a.DailyLimit, a.NewContactLimit = saved.WarmupStart, saved.WarmupGrowthPct, saved.DailyLimit, saved.NewContactLimit
+			if saved.PerContactWeekly != nil {
+				a.PerContactWeekly = saved.PerContactWeekly
+			}
 			if saved.QuietOn != nil {
 				a.QuietOn, a.QuietFrom, a.QuietTo = saved.QuietOn, saved.QuietFrom, saved.QuietTo
 			}
@@ -226,6 +235,12 @@ func (a *API) saveAdminPacing(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.WarmupStart < 0 || body.WarmupStart > 5000 || body.WarmupGrowthPct < 0 || body.WarmupGrowthPct > 500 || body.DailyLimit < 0 || body.DailyLimit > 20000 || body.NewContactLimit < 0 || body.NewContactLimit > 5000 {
 		writeErr(w, http.StatusBadRequest, "bad_request", errors.New("quota: warm-up start 0-5000, growth 0-500 %, daily limit 0-20000, new contacts 0-5000"))
+		return
+	}
+	if body.PerContactWeekly == nil {
+		body.PerContactWeekly = a.m.adminPacing(r.Context()).PerContactWeekly
+	} else if *body.PerContactWeekly < 0 || *body.PerContactWeekly > 500 {
+		writeErr(w, http.StatusBadRequest, "bad_request", errors.New("messages per person a week: 0-500"))
 		return
 	}
 	// A caller that says nothing about the night pause keeps the one in force.

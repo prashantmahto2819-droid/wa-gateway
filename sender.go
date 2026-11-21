@@ -742,6 +742,18 @@ func (s *Session) inSendingHours(now time.Time) bool {
 	return sendingNow(now, on, from, to)
 }
 
+// weeklyPerContact is how many campaign messages one person may get in 7 days.
+// The admin setting wins; .env is the fallback for an install that has never
+// opened the page. 0 means no limit.
+func (s *Session) weeklyPerContact(ctx context.Context) int {
+	if s.m.db != nil {
+		if n := s.m.adminPacing(ctx).PerContactWeekly; n != nil {
+			return *n
+		}
+	}
+	return s.m.cfg.PerContactWeekly
+}
+
 // sendingNow is the hour arithmetic on its own: from 22 to 6 wraps past midnight.
 func sendingNow(now time.Time, on bool, from, to int) bool {
 	if !on || (from == 0 && to == 24) {
@@ -776,7 +788,6 @@ func (s *Session) queueStep(ctx context.Context, batch *int) time.Duration {
 	if ctx.Err() != nil {
 		return time.Second
 	}
-	cfg := s.m.cfg
 	now := time.Now()
 	r := s.row(ctx)
 	if r.paused || r.jid == "" {
@@ -860,7 +871,7 @@ func (s *Session) queueStep(ctx context.Context, batch *int) time.Duration {
 		s.finish(context.WithoutCancel(ctx), id, campaign, "skipped", "opted_out", nil)
 		return 0
 	}
-	if cfg.PerContactWeekly > 0 && weeklyCount(ctx, s.m.db, toAddr) >= cfg.PerContactWeekly {
+	if weekly := s.weeklyPerContact(ctx); weekly > 0 && weeklyCount(ctx, s.m.db, toAddr) >= weekly {
 		_, _ = s.m.db.ExecContext(context.WithoutCancel(ctx), `UPDATE gw_outbox SET status='queued', attempts=attempts-1, error='weekly_limit', not_before=? WHERE id=?`,
 			now.Add(24*time.Hour).Unix(), id)
 		return 0

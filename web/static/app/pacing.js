@@ -34,6 +34,9 @@ export async function pacingPanel(box, { admin = false } = {}) {
         ${num('floor_api_gap', p.floor_api_gap, 0, 'Smallest API / auto-reply gap anyone may use', 'seconds')}
         ${num('status_max', p.status_max || 30000, 10, 'Most people one Status goes to', 'people')}</div>
       ${toggle('users_can_change', !!p.users_can_change, t('Users may change their own pace'), t('They can only go slower than these limits, never faster.'))}</section>
+    <section><h3 class="mb">${ic('people', 16)} ${t('How often one person hears from you')}</h3>
+      <div class="form-grid">${num('per_contact_weekly', p.per_contact_weekly, 0, 'Most campaign messages to one person in 7 days', 'messages')}</div>
+      <p class="hint">${t('0 = no limit. This is what holds a second or third post back when the same list is used again and again — the waiting messages then say “weekly_limit”. It counts campaigns only; an OTP or a reply is never counted.')}</p></section>
     <section><h3 class="mb">${ic('moon', 16)} ${t('Night pause')}</h3>
       ${toggle('quiet_on', !!p.quiet_on, t('Hold campaigns back at night'), t('Off means campaigns run around the clock.'))}
       <div class="form-grid" data-quiet>
@@ -51,7 +54,7 @@ export async function pacingPanel(box, { admin = false } = {}) {
     ${locked ? '' : html`<div class="row" style="justify-content:flex-end;gap:8px">${admin ? '' : html`<button type="button" class="btn ghost" data-reset>${t('Use the defaults')}</button>`}<button class="btn primary">${t('Save sending settings')}</button></div>`}
   </form>`.s;
   const f = box.querySelector('[data-pace]');
-  const ints = ['gap_min', 'gap_max', 'batch_size', 'batch_pause_min', 'api_gap_min', 'api_gap_max', 'reply_delay_min', 'reply_delay_max', 'floor_gap', 'floor_api_gap', 'status_max', 'warmup_start', 'warmup_growth_pct', 'daily_limit', 'new_contact_limit', 'quiet_from', 'quiet_to'];
+  const ints = ['gap_min', 'gap_max', 'batch_size', 'batch_pause_min', 'api_gap_min', 'api_gap_max', 'reply_delay_min', 'reply_delay_max', 'floor_gap', 'floor_api_gap', 'status_max', 'warmup_start', 'warmup_growth_pct', 'daily_limit', 'new_contact_limit', 'quiet_from', 'quiet_to', 'per_contact_weekly'];
   f.addEventListener('submit', async (e) => {
     e.preventDefault();
     const d = {};
